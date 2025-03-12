@@ -1,3 +1,44 @@
+<#
+.SYNOPSIS
+    Continuously monitors network connectivity by pinging devices and testing DNS resolution.
+
+.DESCRIPTION
+    This script continuously performs network monitoring by concurrently pinging a list of IP addresses and testing DNS resolution against specified DNS servers.
+    It logs the results of each test, including timestamps, ping response times, DNS resolution times, and any errors, to a text file.
+    The script is designed to help network administrators quickly assess network health and identify connectivity issues.
+
+.FEATURES
+    - Concurrent Ping Tests: Pings multiple IP addresses in parallel for faster results.
+    - Concurrent DNS Resolution Tests: Tests multiple DNS servers simultaneously.
+    - Detailed Logging: Logs timestamped results to a text file for historical analysis.
+    - Real-time Output: Displays current test results in the PowerShell console.
+    - Configurable Targets: Easily modify IP addresses, DNS servers, and the test domain within the script.
+    - Continuous Monitoring: Runs indefinitely until stopped manually (Ctrl+C).
+
+.CONFIGURATION
+    - $ipAddresses: Array of IP addresses to ping. Modify this array to include the devices you want to monitor.
+    - $dnsServers: Array of DNS server IP addresses to test against. Update this to reflect your DNS infrastructure.
+    - $testDomain: The domain name used for DNS resolution testing (default is "www.google.com").
+    - $logFile:  The script automatically creates a log file in the same directory named "network_monitor_YYYYMMDD_HHMMSS.txt".
+
+.HOW TO USE
+    1. Save this script as a .ps1 file (e.g., NetworkMonitor.ps1).
+    2. Open PowerShell as an Administrator.
+    3. Navigate to the script's directory using 'cd'.
+    4. Run the script using: '.\NetworkMonitor.ps1'.
+    5. Monitor the real-time output in the console and check the log file for detailed results.
+    6. Press Ctrl+C to stop the script.
+
+.NOTES
+    - Ensure PowerShell execution policy is set to allow script execution if needed (e.g., RemoteSigned).
+    - Log files are created in the same directory as the script.
+    - Requires PowerShell version 3.0 or later for Job cmdlets.
+
+.EXAMPLE
+    .\NetworkMonitor.ps1
+
+#>
+
 # IP addresses to ping
 $ipAddresses = @(
     "192.168.2.1",
