@@ -1,6 +1,8 @@
 
 # Network Connectivity Watchdog
 
+![Screenshot of terminal output](image.png)
+
 ## Description
 
 The Network Connectivity Watchdog is a PowerShell script designed to continuously monitor network connectivity and automatically reset the network adapter if issues are detected. This tool is universal and can work with any type of network adapter, making it suitable for various environments. It provides real-time monitoring with a dashboard interface showing connectivity status, test results, and adapter statistics.
