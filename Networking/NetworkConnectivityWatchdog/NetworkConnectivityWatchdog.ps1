@@ -40,7 +40,7 @@
     Version        : 1.0.0
 
 .LINK
-    https://github.com/ghostinator/SysAdminPSSorcery/NetworkConnectivityWatchdog
+    https://github.com/ghostinator/SysAdminPSSorcery/tree/main/Networking/NetworkConnectivityWatchdog
 #>
 
 [CmdletBinding()]

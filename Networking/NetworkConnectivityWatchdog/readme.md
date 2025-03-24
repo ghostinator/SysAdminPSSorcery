@@ -102,7 +102,7 @@ You can add, remove, or modify these targets to suit your specific network envir
 
 ## Contributing
 
-Contributions are welcome! If you find a bug or have a feature request, please open an issue or submit a pull request on the SysAdminPSSorcery repo. https://github.com/ghostinator/SysAdminPSSorcery/NetworkConnectivityWatchdog
+Contributions are welcome! If you find a bug or have a feature request, please open an issue or submit a pull request on the SysAdminPSSorcery repo. https://github.com/ghostinator/SysAdminPSSorcery/tree/main/Networking/NetworkConnectivityWatchdog
 
 Please follow these guidelines when contributing:
 
