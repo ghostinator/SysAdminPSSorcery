@@ -2,24 +2,28 @@
 
 A comprehensive PowerShell GUI tool for managing, troubleshooting, and configuring L2TP VPN connections on Windows systems.
 
+##Issues
+Some features such as Test connection are not able to get the information from ALL-USERS VPN connections.
+
+
 ## Features
 
 ### VPN Connection Management
 - Create new L2TP VPN connections with advanced configuration options
 - View and manage existing VPN connections from multiple sources:
   - Windows VPN connections
+  - All-user VPN connections
   - RAS Phone Book entries
   - Registry-stored connections
-  - All-user connections
-- Delete VPN connections
-- Test VPN connectivity
 - View and modify existing VPN settings
+- Delete VPN connections from all sources
+- Test VPN connectivity with timeout controls
 
 ### Advanced Configuration Options
-- PSK or Certificate-based authentication
+- PSK or Certificate-based authentication (Cert based auth in progress)
 - Split tunneling configuration
 - Authentication method selection (MSChapv2, EAP, PAP, CHAP)
-- Encryption level settings (Required, Optional, None, Maximum)
+- Encryption level settings (Default: None)
 - IPv4/IPv6 configuration
 - Idle disconnect timing
 - Winlogon credential integration
@@ -40,7 +44,8 @@ A comprehensive PowerShell GUI tool for managing, troubleshooting, and configuri
 - Network Connectivity Testing
   - Server reachability
   - DNS resolution
-  - Port accessibility
+  - Port accessibility with 10-second timeouts
+  - Cancellable connection tests
 - Full VPN Connection Analysis
   - Connection status
   - Port accessibility
@@ -99,18 +104,17 @@ A comprehensive PowerShell GUI tool for managing, troubleshooting, and configuri
 3. Configure advanced settings if needed:
    - Split tunneling
    - Authentication method
-   - Encryption level
+   - Encryption level (Default: None)
    - IPv4/IPv6 settings
    - Idle disconnect
 4. Click "Create New VPN"
 
 ### Managing Existing VPNs
 1. Use the VPN Connection Manager section to:
-   - View existing VPN connections
+   - View existing VPN connections from all sources
    - View and modify settings
-   - Delete connections
+   - Delete connections (removes from all locations)
    - Refresh the connection list
-2. Select a VPN to view or modify its configuration
 
 ### Troubleshooting Existing VPN
 1. Go to the "Diagnostics" tab
@@ -118,7 +122,7 @@ A comprehensive PowerShell GUI tool for managing, troubleshooting, and configuri
    - Network Stack Info
    - Test Network Connectivity
    - Check VPN Prerequisites
-   - Analyze VPN Connection
+   - Analyze VPN Connection (with timeout controls)
    - Reset Network Stack
    - Repair VPN Connection
 
@@ -157,14 +161,11 @@ A comprehensive PowerShell GUI tool for managing, troubleshooting, and configuri
   - Registry settings
   - Network adapter settings
 
-## Support
-For issues or feature requests, please create an issue in the repository.
-
 ## Version
 0.13
 
 ## Author
-Brandon Cook
+Brandon Cook 
 
 ## License
 MIT
