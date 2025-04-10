@@ -10,9 +10,10 @@ A comprehensive PowerShell GUI tool for managing, troubleshooting, and configuri
   - Windows VPN connections
   - RAS Phone Book entries
   - Registry-stored connections
+  - All-user connections
 - Delete VPN connections
 - Test VPN connectivity
-- View detailed VPN settings
+- View and modify existing VPN settings
 
 ### Advanced Configuration Options
 - PSK or Certificate-based authentication
@@ -26,24 +27,35 @@ A comprehensive PowerShell GUI tool for managing, troubleshooting, and configuri
 
 ### Diagnostic Tools
 - Network Stack Information
-  - Adapter details
+  - Adapter details and status
   - IP configuration
-  - Routing table
+  - Routing table information
+  - Interface speeds
 - VPN Prerequisites Check
   - Required services status
   - L2TP/IPsec components
   - Firewall rules
   - Registry settings
+  - IPsec policy verification
 - Network Connectivity Testing
+  - Server reachability
+  - DNS resolution
+  - Port accessibility
 - Full VPN Connection Analysis
   - Connection status
   - Port accessibility
   - Event logs
   - Network interface details
+  - Security associations
+  - Connection statistics
 
 ### Network Repair Tools
-- Guided WAN Miniport device removal
-- Network stack reset with detailed command output
+- Guided WAN Miniport device removal process
+- Network stack reset with detailed command output:
+  - Winsock reset
+  - IP stack reset
+  - DNS cache clearing
+  - IP release/renew
 - VPN service configuration
 - IPsec policy reset
 - DNS cache management
@@ -52,6 +64,7 @@ A comprehensive PowerShell GUI tool for managing, troubleshooting, and configuri
   - DNS cache clearing
   - IPsec policy reset
   - Connection recreation
+  - Configuration backup
 
 ### Logging and Monitoring
 - Comprehensive logging system
@@ -60,6 +73,7 @@ A comprehensive PowerShell GUI tool for managing, troubleshooting, and configuri
 - Performance monitoring
 - Log export and management
 - Clear log functionality
+- Separate error and general logs
 
 ## Requirements
 - Windows Operating System
@@ -82,15 +96,21 @@ A comprehensive PowerShell GUI tool for managing, troubleshooting, and configuri
    - Server Address
    - Authentication Type (PSK/Certificate)
    - Required credentials
-3. Configure advanced settings if needed
+3. Configure advanced settings if needed:
+   - Split tunneling
+   - Authentication method
+   - Encryption level
+   - IPv4/IPv6 settings
+   - Idle disconnect
 4. Click "Create New VPN"
 
 ### Managing Existing VPNs
 1. Use the VPN Connection Manager section to:
    - View existing VPN connections
-   - View detailed settings
+   - View and modify settings
    - Delete connections
    - Refresh the connection list
+2. Select a VPN to view or modify its configuration
 
 ### Troubleshooting Existing VPN
 1. Go to the "Diagnostics" tab
@@ -103,4 +123,48 @@ A comprehensive PowerShell GUI tool for managing, troubleshooting, and configuri
    - Repair VPN Connection
 
 ### Network Stack Reset
-1. Select
+1. Select "Reset Network Stack"
+2. Follow the guided process:
+   - Manual WAN Miniport device removal in Device Manager
+   - Automatic network stack reset
+   - Service restart
+   - System restart required after completion
+
+### VPN Repair Process
+1. Select "Repair VPN Connection"
+2. Choose the VPN to repair
+3. Select repair options:
+   - Restart VPN services
+   - Clear DNS cache
+   - Reset IPSec policies
+   - Recreate VPN connection
+4. Monitor repair progress in status window
+
+## Logging
+- Logs are stored in `C:\VPNDiagnostics\`
+  - General logs: `vpn.log`
+  - Error logs: `error.log`
+  - Performance logs: `performance.log`
+- View logs in the "Logs" tab
+- Refresh or clear logs as needed
+- Real-time status updates
+
+## Backup and Recovery
+- Automatic backup before repairs
+- Backup location: `C:\VPNBackup_[DateTime]`
+- Includes:
+  - VPN configurations
+  - Registry settings
+  - Network adapter settings
+
+## Support
+For issues or feature requests, please create an issue in the repository.
+
+## Version
+0.13
+
+## Author
+Brandon Cook
+
+## License
+MIT
