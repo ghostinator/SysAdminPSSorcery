@@ -1,174 +1,158 @@
 # L2TP VPN Troubleshooter GUI
+Version 0.15 "OMFG MY HEAD HURTS EDITION"
 
-A comprehensive PowerShell GUI tool for managing, troubleshooting, and configuring L2TP VPN connections on Windows systems.
+## Overview
+A comprehensive PowerShell-based GUI tool for troubleshooting, managing, and repairing L2TP VPN connections on Windows systems. This tool provides a user-friendly interface for common VPN management tasks and advanced diagnostics.
 
-## Issues
-Some features such as Test connection are not able to get the information from ALL-USERS VPN connections.
-
-![CleanShot 2025-04-10 at 16 23 55](https://github.com/user-attachments/assets/3b6b97e4-3b2d-4810-b60b-90fb24a97d36)
-![CleanShot 2025-04-10 at 16 28 14](https://github.com/user-attachments/assets/568a4417-8d22-48a4-acb6-465be7ecb0a5)
+![CleanShot 2025-04-21 at 15 41 06](https://github.com/user-attachments/assets/ea0fcd5f-75f0-4912-ac1a-e04da0b4da59)
+![CleanShot 2025-04-21 at 15 52 54](https://github.com/user-attachments/assets/2cc4cfcd-e99a-4756-8844-cb7121112525)
 
 
 ## Features
 
 ### VPN Connection Management
+- View and manage existing VPN connections (both user-specific and all-user)
 - Create new L2TP VPN connections with advanced configuration options
-- View and manage existing VPN connections from multiple sources:
-  - Windows VPN connections
-  - All-user VPN connections
-  - RAS Phone Book entries
-  - Registry-stored connections
-- View and modify existing VPN settings
-- Delete VPN connections from all sources
-- Test VPN connectivity with timeout controls
-
-### Advanced Configuration Options
-- PSK or Certificate-based authentication (Cert based auth in progress)
-- Split tunneling configuration
-- Authentication method selection (MSChapv2, EAP, PAP, CHAP)
-- Encryption level settings (Default: None)
-- IPv4/IPv6 configuration
-- Idle disconnect timing
-- Winlogon credential integration
-- Remember credential option
+- Delete existing VPN connections
+- View detailed VPN connection settings
 
 ### Diagnostic Tools
-- Network Stack Information
-  - Adapter details and status
-  - IP configuration
-  - Routing table information
-  - Interface speeds
+- Network Stack Information Analysis
+- Comprehensive Network Testing
+  - ICMP (Ping) Tests
+  - DNS Resolution Tests
+  - Traceroute Analysis
+  - VPN Port Testing (500, 1701, 4500)
+  - Network Interface Information
 - VPN Prerequisites Check
-  - Required services status
-  - L2TP/IPsec components
-  - Firewall rules
-  - Registry settings
-  - IPsec policy verification
-- Network Connectivity Testing
-  - Server reachability
-  - DNS resolution
-  - Port accessibility with 10-second timeouts
-  - Cancellable connection tests
-- Full VPN Connection Analysis
-  - Connection status
-  - Port accessibility
-  - Event logs
-  - Network interface details
-  - Security associations
-  - Connection statistics
+  - Service Status Verification
+  - L2TP/IPsec Component Check
+  - Firewall Rule Analysis
+  - Registry Settings Validation
 
-### Network Repair Tools
-- Guided WAN Miniport device removal process
-- Network stack reset with detailed command output:
-  - Winsock reset
-  - IP stack reset
-  - DNS cache clearing
-  - IP release/renew
-- VPN service configuration
-- IPsec policy reset
-- DNS cache management
-- VPN connection repair with options:
-  - Service restart
-  - DNS cache clearing
-  - IPsec policy reset
-  - Connection recreation
-  - Configuration backup
+### Repair Tools
+- Network Stack Reset
+  - WAN Miniport Device Management
+  - Network Service Reset
+  - IP Configuration Reset
+- VPN Connection Repair
+  - Backup Current Configuration
+  - Service Restart
+  - DNS Cache Clearing
+  - Connection Recreation with Credential Management
 
-### Logging and Monitoring
-- Comprehensive logging system
-- Real-time status updates
-- Error tracking
-- Performance monitoring
-- Log export and management
-- Clear log functionality
-- Separate error and general logs
+### Advanced Features
+- Automatic Logging System
+  - Error Logging
+  - Performance Logging
+  - Diagnostic Information
+- Backup and Restore Capabilities
+- Credential Management
+- Split Tunneling Configuration
+- IPv4/IPv6 Settings Management
 
 ## Requirements
 - Windows Operating System
 - PowerShell 5.1 or later
-- Administrator privileges
+- Administrative privileges
 - .NET Framework 4.5 or later
 
 ## Installation
-1. Download the script file
-2. Right-click and select "Run with PowerShell" as Administrator
-   - Or launch PowerShell as Administrator and navigate to the script directory
-   - Run: `.\VPNTroubleshooterGUI.ps1`
+1. Download the script file (`VPNTroubleshooterGUI.ps1`)
+2. Right-click the file and select "Run with PowerShell" or
+3. Open PowerShell as Administrator and navigate to the script directory:
+```powershell
+.\VPNTroubleshooterGUI.ps1
 
 ## Usage
 
 ### Creating a New VPN Connection
-1. Navigate to the "Configuration" tab
-2. Fill in the required basic settings:
-   - VPN Name
-   - Server Address
-   - Authentication Type (PSK/Certificate)
-   - Required credentials
-3. Configure advanced settings if needed:
-   - Split tunneling
-   - Authentication method
-   - Encryption level (Default: None)
-   - IPv4/IPv6 settings
-   - Idle disconnect
-4. Click "Create New VPN"
 
-### Managing Existing VPNs
-1. Use the VPN Connection Manager section to:
-   - View existing VPN connections from all sources
-   - View and modify settings
-   - Delete connections (removes from all locations)
-   - Refresh the connection list
+1. Navigate to the **Configuration** tab.
+2. Fill in the required fields:
+   - **VPN Name**
+   - **Server Address**
+   - **Authentication Type** (PSK/Certificate)
+   - **Pre-shared Key** (if using PSK)
+3. Configure advanced settings if needed.
+4. Click **Save VPN**.
 
-### Troubleshooting Existing VPN
-1. Go to the "Diagnostics" tab
-2. Choose from available diagnostic tools:
-   - Network Stack Info
-   - Test Network Connectivity
-   - Check VPN Prerequisites
-   - Analyze VPN Connection (with timeout controls)
-   - Reset Network Stack
-   - Repair VPN Connection
+---
 
-### Network Stack Reset
-1. Select "Reset Network Stack"
-2. Follow the guided process:
-   - Manual WAN Miniport device removal in Device Manager
-   - Automatic network stack reset
-   - Service restart
-   - System restart required after completion
+### Troubleshooting an Existing Connection
 
-### VPN Repair Process
-1. Select "Repair VPN Connection"
-2. Choose the VPN to repair
-3. Select repair options:
-   - Restart VPN services
-   - Clear DNS cache
-   - Reset IPSec policies
-   - Recreate VPN connection
-4. Monitor repair progress in status window
+1. Go to the **Diagnostics** tab.
+2. Use **Network Stack Info** for basic connectivity information.
+3. Run **Comprehensive Network Test** for detailed analysis.
+4. Check VPN prerequisites using **Check VPN Prerequisites**.
 
-## Logging
+---
+
+### Repairing VPN Issues
+
+1. Select **Repair VPN Connection**.
+2. Choose the VPN connection to repair.
+3. Enter the required credentials and PSK.
+4. Select repair options.
+5. Click **Start Repair**.
+
+---
+
+### Logging
+
 - Logs are stored in `C:\VPNDiagnostics\`
-  - General logs: `vpn.log`
-  - Error logs: `error.log`
-  - Performance logs: `performance.log`
-- View logs in the "Logs" tab
-- Refresh or clear logs as needed
-- Real-time status updates
+- Three log types:
+  - `vpn.log`: General operation logs
+  - `error.log`: Error messages
+  - `performance.log`: Performance metrics
 
-## Backup and Recovery
-- Automatic backup before repairs
-- Backup location: `C:\VPNBackup_[DateTime]`
-- Includes:
-  - VPN configurations
-  - Registry settings
-  - Network adapter settings
+---
 
-## Version
-0.13
+### Backup Location
 
-## Author
-Brandon Cook 
+- VPN configuration backups are stored in:  
+  `C:\VPNBackup_[DATE]_[TIME]\`
 
-## License
+---
+
+### Common Issues and Solutions
+
+**WAN Miniport Missing**  
+- Use the **Reset Network Stack** option  
+- Follow the guided process to reinstall devices
+
+**Service Issues**  
+- Check VPN Prerequisites  
+- Use the Repair tool to restart services
+
+**Connection Failures**  
+- Run Comprehensive Network Test  
+- Verify port accessibility  
+- Check PSK and credentials
+
+---
+
+### Notes
+
+- Always run as Administrator
+- Create a backup before making changes
+- Some operations require a system restart
+- Credential storage uses Windows Credential Manager
+
+---
+
+### Author
+
+Brandon Cook
+
+---
+
+### License
+
 MIT
+
+---
+
+### Support
+
+maaybe
