@@ -63,6 +63,7 @@ A comprehensive PowerShell-based GUI tool for troubleshooting, managing, and rep
 3. Open PowerShell as Administrator and navigate to the script directory:
 ```powershell
 .\VPNTroubleshooterGUI.ps1
+```
 
 ## Usage
 
