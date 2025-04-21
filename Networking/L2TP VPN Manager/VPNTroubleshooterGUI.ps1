@@ -1,6 +1,6 @@
 # /Users/BrandonCook/VPNTroubleshooterGUI.ps1
 # L2TP VPN Troubleshooter
-# Version 0.13
+# Version 0.15 "OMFG MY HEAD HURTS EDITION"
 # Author: Brandon Cook
 
 # Import required assemblies
@@ -64,10 +64,62 @@ class VPNLogger {
     }
 }
 
+# VPN Prerequisites Conclusion Class
+class VPNPrerequisitesConclusion {
+    [string]$Status
+    [System.Collections.ArrayList]$Issues
+    [System.Collections.ArrayList]$Recommendations
+    [string]$Summary
+
+    VPNPrerequisitesConclusion() {
+        $this.Status = "Ready"
+        $this.Issues = [System.Collections.ArrayList]::new()
+        $this.Recommendations = [System.Collections.ArrayList]::new()
+        $this.Summary = ""
+    }
+
+    [void] AddIssue([string]$issue, [string]$recommendation) {
+        $this.Issues.Add($issue)
+        $this.Recommendations.Add($recommendation)
+        $this.Status = "Not Ready"
+    }
+
+    [string] GenerateSummary() {
+        if ($this.Status -eq "Ready") {
+            $this.Summary = "✓ All VPN prerequisites are met. Your system is ready for VPN connections."
+        } else {
+            $this.Summary = "⚠ VPN Prerequisites Check Failed`n`n"
+            $this.Summary += "Issues Found:`n"
+            for ($i = 0; $i -lt $this.Issues.Count; $i++) {
+                $this.Summary += "• $($this.Issues[$i])`n"
+            }
+            $this.Summary += "`nRecommended Actions:`n"
+            for ($i = 0; $i -lt $this.Recommendations.Count; $i++) {
+                $this.Summary += "$($i + 1). $($this.Recommendations[$i])`n"
+            }
+        }
+        return $this.Summary
+    }
+}
+
 # Initialize Logger
 $Logger = [VPNLogger]::new()
 function Start-VPNDiagnostics {
-    param([string]$VPNName)
+    param([string]$VPNName)    
+    # Define public DNS servers to test connectivity
+    $publicDnsServers = @(
+        @{Name = "Google DNS Primary"; IP = "8.8.8.8"},
+        @{Name = "Google DNS Secondary"; IP = "8.8.4.4"},
+        @{Name = "Cloudflare Primary"; IP = "1.1.1.1"},
+        @{Name = "Cloudflare Secondary"; IP = "1.0.0.1"},
+        @{Name = "OpenDNS Primary"; IP = "208.67.222.222"},
+        @{Name = "OpenDNS Secondary"; IP = "208.67.220.220"},
+        @{Name = "Quad9"; IP = "9.9.9.9"},
+        @{Name = "AdGuard DNS"; IP = "94.140.14.14"},
+        @{Name = "CleanBrowsing"; IP = "185.228.168.168"},
+        @{Name = "Verisign"; IP = "64.6.64.6"}
+    )    
+
     
     $diagnosticResults = @()
     
@@ -88,26 +140,51 @@ function Start-VPNDiagnostics {
         }
     }
 
-    # Check Required Services
+    # Check VPN Client Service
     $services = @{
-        'RasMan'       = 'Remote Access Connection Manager'
-        'RemoteAccess' = 'Routing and Remote Access'
-        'PolicyAgent'  = 'IPsec Policy Agent'
-        'IKEExt'       = 'IKE and AuthIP IPsec Keying Modules'
+        'RasMan' = 'Remote Access Connection Manager (Required for VPN Client)'
     }
 
     foreach ($service in $services.GetEnumerator()) {
         $status = Get-Service -Name $service.Key -ErrorAction SilentlyContinue
         $diagnosticResults += @{
             Component = $service.Value
-            Status    = if ($status.Status -eq 'Running') { "Running" } else { "Not Running" }
+            Status    = i        # Test VPN Server Connectivity            
             Details   = "Service State: $($status.Status), Start Type: $($status.StartType)"
         }
     }
 
     # Check WAN Miniports
-    $miniports = Get-PnpDevice | Where-Object { $_.FriendlyName -like "*WAN Miniport*" }
-    $diagnosticResults += @{
+    $mini
+        # Test General Internet Connectivity using Public DNS Servers
+        $reachableDns = 0
+        $totalTestedDns = 0
+        $bestLatency = [int]::MaxValue
+        $bestDns = ""
+
+        foreach ($dns in $publicDnsServers) {
+            $dnsTest = Test-Connection -ComputerName $dns.IP -Count 1 -ErrorAction SilentlyContinue
+            $totalTestedDns++
+            
+            if ($dnsTest) {
+                $reachableDns++
+                if ($dnsTest.ResponseTime -lt $bestLatency) {
+                    $bestLatency = $dnsTest.ResponseTime
+                    $bestDns = $dns.Name
+                }
+            }
+        }
+
+        $diagnosticResults += @{
+            Component = "Internet Connectivity"
+            Status = if ($reachableDns -gt 0) { "Connected" } else { "No Connection" }
+            Details = if ($reachableDns -gt 0) {
+                "$reachableDns out of $totalTestedDns DNS servers reachable. Best response: $bestDns ($bestLatency ms)"
+            } else {
+                "Unable to reach any public DNS servers. Check internet connection."
+            }
+        }    
+        $diagnosticResults += @{
         Component = "WAN Miniports"
         Status    = if ($miniports) { "Found" } else { "Missing" }
         Details   = "Found $($miniports.Count) WAN Miniport devices"
@@ -122,22 +199,26 @@ function Start-VPNDiagnostics {
             Details   = if ($pingTest) { "Latency: $($pingTest.ResponseTime)ms" } else { "Unable to reach server" }
         }
 
-        # Test VPN Ports
-        $ports = @(500, 1701, 4500)
-        foreach ($port in $ports) {
-            $portTest = Test-NetConnection -ComputerName $vpnConnection.ServerAddress -Port $port -WarningAction SilentlyContinue
+        # Check if required ports are accessible (not blocked by firewall)
+        $ports = @(
+            @{Port = 500; Purpose = "IKE (Internet Key Exchange)"},
+            @{Port = 1701; Purpose = "L2TP"},
+            @{Port = 4500; Purpose = "IPSec NAT Traversal"}
+        )
+        
+        foreach ($portInfo in $ports) {
+            $portTest = Test-NetConnection -ComputerName $vpnConnection.ServerAddress -Port $portInfo.Port -WarningAction SilentlyContinue
             $diagnosticResults += @{
-                Component = "Port $port"
-                Status    = if ($portTest.TcpTestSucceeded) { "Open" } else { "Closed" }
-                Details   = "Required for L2TP/IPsec"
+                Component = "Port $($portInfo.Port)"
+                Status    = if ($portTest.TcpTestSucceeded) { "Accessible" } else { "Blocked" }
+                Details   = "$($portInfo.Purpose) - Check firewall rules if blocked"
             }
         }
     }
 
-    # Check Registry Settings
+    # Check Client Registry Settings
     $registryPaths = @{
-        "HKLM:\SYSTEM\CurrentControlSet\Services\PolicyAgent"       = "AssumeUDPEncapsulationContextOnSendRule"
-        "HKLM:\SYSTEM\CurrentControlSet\Services\RasMan\Parameters" = "ProhibitIpSec"
+        "HKLM:\SYSTEM\CurrentControlSet\Services\RasMan\Parameters" = "AllowL2TPWeakCrypto"
     }
 
     foreach ($path in $registryPaths.GetEnumerator()) {
@@ -147,6 +228,75 @@ function Start-VPNDiagnostics {
             Status    = if ($value) { "Configured" } else { "Missing" }
             Details   = "Path: $($path.Key)"
         }
+    }
+
+    # Analyze results and provide conclusion
+    $conclusion = [VPNPrerequisitesConclusion]::new()
+    
+    # Check VPN Configuration
+    $vpnConfig = $diagnosticResults | Where-Object { $_.Component -eq "VPN Configuration" }
+    if ($vpnConfig.Status -eq "Not Found") {
+        $conclusion.AddIssue(
+            "VPN connection not configured",
+            "Create a new L2TP VPN connection with the correct server address"
+        )
+    }
+
+    # Check Required Client Service
+    $rasmanService = $diagnosticResults | Where-Object { 
+        $_.Component -eq "Remote Access Connection Manager" -and $_.Status -ne "Running"
+    }
+    if ($rasmanService) {
+        $conclusion.AddIssue(
+            "VPN Client service not running",
+            "Enable and start the Remote Access Connection Manager (RasMan) service: Open Services app, find 'Remote Access Connection Manager', set Startup type to Automatic and click Start"
+        )
+    }
+
+    # Check WAN Miniports
+    $miniports = $diagnosticResults | Where-Object { $_.Component -eq "WAN Miniports" }
+    if ($miniports.Status -eq "Missing") {
+        $conclusion.AddIssue(
+            "WAN Miniport devices missing",
+            "Use the 'Reset Network Devices' option to reinstall WAN Miniports"
+        )
+    }
+
+    # Check Internet Connectivity
+    $internetCheck = $diagnosticResults | Where-Object { $_.Component -eq "Internet Connectivity" }
+    if ($internetCheck.Status -eq "No Connection") {
+        $conclusion.AddIssue(
+            "No internet connectivity detected",
+            "Check your internet connection and try connecting to different networks (e.g., mobile hotspot)"
+        )
+    }
+
+    # Check Server Connectivity
+    $connectivity = $diagnosticResults | Where-Object { $_.Component -eq "Server Connectivity" }
+    if ($connectivity -and $connectivity.Status -eq "Unreachable") {
+        $conclusion.AddIssue(
+            "Cannot reach VPN server",
+            "Verify the VPN server address is correct and the server is operational"
+        )
+    }
+
+    # Check Port Accessibility
+    $blockedPorts = $diagnosticResults | Where-Object { 
+        $_.Component -like "Port *" -and $_.Status -eq "Blocked"
+    }
+    if ($blockedPorts) {
+        $portList = $blockedPorts.Component -join ', '
+        $conclusion.AddIssue(
+            "Required ports are blocked: $portList",
+            "Check Windows Firewall and antivirus settings to ensure ports 500, 1701, and 4500 are allowed"
+        )
+    }
+
+    # Generate and add conclusion to results
+    $diagnosticResults += @{
+        Component = "Prerequisites Conclusion"
+        Status = $conclusion.Status
+        Details = $conclusion.GenerateSummary()
     }
 
     return $diagnosticResults
@@ -283,19 +433,49 @@ function Reset-NetworkStack {
 }
 # Backup Function
 function Backup-VPNConfiguration {
+    param(
+        [string]$VPNName
+    )
+    
     $backupDate = Get-Date -Format "yyyy-MM-dd_HH-mm"
     $backupDir = "C:\VPNBackup_$backupDate"
     
     try {
-        New-Item -ItemType Directory -Path $backupDir -Force
+        # Create backup directory
+        New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
         
-        # Export VPN connections
-        $vpnConnections = Get-VpnConnection -ErrorAction SilentlyContinue
-        $vpnConnections | ConvertTo-Json | Out-File "$backupDir\vpn_connections.json"
+        # Try to export both user-specific and all-user VPN connection details
+        $vpnConnections = @()
         
-        # Export registry settings
+        # Try user-specific connection
+        try {
+            $userVPN = Get-VpnConnection -Name $VPNName -ErrorAction SilentlyContinue
+            if ($userVPN) {
+                $vpnConnections += @{
+                    Connection = $userVPN
+                    Type = "User"
+                }
+            }
+        } catch { }
+        
+        # Try all-user connection
+        try {
+            $allUserVPN = Get-VpnConnection -Name $VPNName -AllUserConnection -ErrorAction SilentlyContinue
+            if ($allUserVPN) {
+                $vpnConnections += @{
+                    Connection = $allUserVPN
+                    Type = "AllUsers"
+                }
+            }
+        } catch { }
+        
+        if ($vpnConnections.Count -gt 0) {
+            $vpnConnections | ConvertTo-Json | Out-File "$backupDir\vpn_connections.json"
+            $Logger.Log("VPN connection details backed up", "INFO")
+        }
+        
+        # Export relevant registry settings
         $registryPaths = @(
-            "HKLM:\SYSTEM\CurrentControlSet\Services\PolicyAgent",
             "HKLM:\SYSTEM\CurrentControlSet\Services\RasMan",
             "HKLM:\SYSTEM\CurrentControlSet\Services\Rasl2tp"
         )
@@ -305,18 +485,14 @@ function Backup-VPNConfiguration {
             reg export ($path -replace 'HKLM:\\', 'HKLM\') "$backupDir\${regName}.reg" /y
         }
         
-        # Export network adapter configuration
-        Get-NetAdapter | Export-Clixml "$backupDir\network_adapters.xml"
-        
-        $Logger.Log("Backup created successfully in $backupDir")
+        $Logger.Log("Backup created successfully in $backupDir", "INFO")
         return $true
     }
     catch {
-        $Logger.Log("Backup failed: $_", "ERROR")
+        $Logger.Log("Backup failed: $($_.Exception.Message)", "ERROR")
         return $false
     }
 }
-
 # Cleanup Function
 function Remove-ExistingVPNConfiguration {
     param([string]$VPNName)
@@ -397,7 +573,7 @@ function New-VPNConnection {
         [bool]$RememberCredential = $true,
 
         [Parameter(Mandatory = $false)]
-        [ValidateSet("Required", "Optional", "None", "Maximum")]
+        [ValidateSet("Required", "Optional", "NoEncryption", "Maximum")]
         [string]$EncryptionLevel = "Required",
 
         [Parameter(Mandatory = $false)]
@@ -484,40 +660,7 @@ function New-VPNConnection {
         return $false
     }
 }
-# Test VPN Connection
-function Test-VPNConnection {
-    param(
-        [string]$VPNName,
-        [string]$ServerAddress
-    )
-    
-    try {
-        $connection = Get-VpnConnection -Name $VPNName -ErrorAction Stop
-        
-        $results = @{
-            "Connection Name"       = $connection.Name
-            "Server Address"        = $connection.ServerAddress
-            "Connection Status"     = $connection.ConnectionStatus
-            "Tunnel Type"           = $connection.TunnelType
-            "Authentication Method" = $connection.AuthenticationMethod
-            "Split Tunneling"       = $connection.SplitTunneling
-            "Encryption Level"      = $connection.EncryptionLevel
-        }
-        
-        # Test connectivity
-        $ports = @(500, 1701, 4500)
-        foreach ($port in $ports) {
-            $test = Test-NetConnection -ComputerName $ServerAddress -Port $port -WarningAction SilentlyContinue
-            $results["Port $port"] = $test.TcpTestSucceeded
-        }
-        
-        return $results
-    }
-    catch {
-        $Logger.Log("Connection test failed: $_", "ERROR")
-        return $null
-    }
-}
+
 
 # GUI Implementation
 function Show-VPNTroubleshooterGUI {
@@ -872,17 +1015,17 @@ function Show-VPNTroubleshooterGUI {
         $newVPNGroup = New-Object System.Windows.Forms.GroupBox
         $newVPNGroup.Text = "New VPN Configuration"
         $newVPNGroup.Location = New-Object System.Drawing.Point(10, 230)
-        $newVPNGroup.Size = New-Object System.Drawing.Size(740, 300)
+        $newVPNGroup.Size = New-Object System.Drawing.Size(740, 400)
         $configTab.Controls.Add($newVPNGroup)
 
         # Basic Settings Group
         $basicSettingsGroup = New-Object System.Windows.Forms.GroupBox
         $basicSettingsGroup.Text = "Basic Settings"
         $basicSettingsGroup.Location = New-Object System.Drawing.Point(10, 20)
-        $basicSettingsGroup.Size = New-Object System.Drawing.Size(350, 200)
+        $basicSettingsGroup.Size = New-Object System.Drawing.Size(350, 210)
         $newVPNGroup.Controls.Add($basicSettingsGroup)
 
-        # Basic Input Fields
+        # Basic Input Fields 
         $basicFields = @{
             'VPN Name'               = @{Required = $true }
             'Server Address'         = @{Required = $true }
@@ -918,8 +1061,8 @@ function Show-VPNTroubleshooterGUI {
                 }
             }
         
-            $control.Location = New-Object System.Drawing.Point(140, $yPosition)
-            $control.Size = New-Object System.Drawing.Size(200, 20)
+            $control.Location = New-Object System.Drawing.Point(160, $yPosition)
+            $control.Size = New-Object System.Drawing.Size(180, 20)
             $basicSettingsGroup.Controls.Add($control)
             $inputControls[$field.Key] = $control
 
@@ -930,7 +1073,7 @@ function Show-VPNTroubleshooterGUI {
         $advancedSettingsGroup = New-Object System.Windows.Forms.GroupBox
         $advancedSettingsGroup.Text = "Advanced Settings"
         $advancedSettingsGroup.Location = New-Object System.Drawing.Point(370, 20)
-        $advancedSettingsGroup.Size = New-Object System.Drawing.Size(350, 200)
+        $advancedSettingsGroup.Size = New-Object System.Drawing.Size(350, 280)
         $newVPNGroup.Controls.Add($advancedSettingsGroup)
 
         # Advanced Settings Controls
@@ -940,12 +1083,12 @@ function Show-VPNTroubleshooterGUI {
             'Authentication Method'     = @{ 
                 Type    = 'ComboBox'
                 Options = @('MSChapv2', 'EAP', 'PAP', 'CHAP')
-                Default = 'MSChapv2'
+                Default = 'PAP'
             }
             'Encryption Level'          = @{
                 Type    = 'ComboBox'
-                Options = @('Required', 'Optional', 'None', 'Maximum')
-                Default = 'None'
+                Options = @('Required', 'Optional', 'NoEncryption', 'Maximum')
+                Default = 'Optional'
             }
             'IPv4 Only'                 = @{ Type = 'CheckBox'; Default = $false }
             'Use Winlogon Credential'   = @{ Type = 'CheckBox'; Default = $false }
@@ -956,21 +1099,21 @@ function Show-VPNTroubleshooterGUI {
         foreach ($setting in $advancedSettings.GetEnumerator()) {
             $label = New-Object System.Windows.Forms.Label
             $label.Location = New-Object System.Drawing.Point(10, $yPos)
-            $label.Size = New-Object System.Drawing.Size(120, 20)
+            $label.Size = New-Object System.Drawing.Size(150, 20)
             $label.Text = $setting.Key
             $advancedSettingsGroup.Controls.Add($label)
 
             switch ($setting.Value.Type) {
                 'CheckBox' {
                     $control = New-Object System.Windows.Forms.CheckBox
-                    $control.Location = New-Object System.Drawing.Point(140, $yPos)
-                    $control.Size = New-Object System.Drawing.Size(200, 20)
+                    $control.Location = New-Object System.Drawing.Point(160, $yPos)
+                    $control.Size = New-Object System.Drawing.Size(180, 20)
                     $control.Checked = $setting.Value.Default
                 }
                 'ComboBox' {
                     $control = New-Object System.Windows.Forms.ComboBox
-                    $control.Location = New-Object System.Drawing.Point(140, $yPos)
-                    $control.Size = New-Object System.Drawing.Size(200, 20)
+                    $control.Location = New-Object System.Drawing.Point(160, $yPos)
+                    $control.Size = New-Object System.Drawing.Size(180, 20)
                     $control.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
                     foreach ($option in $setting.Value.Options) {
                         $control.Items.Add($option)
@@ -979,8 +1122,8 @@ function Show-VPNTroubleshooterGUI {
                 }
                 'TextBox' {
                     $control = New-Object System.Windows.Forms.TextBox
-                    $control.Location = New-Object System.Drawing.Point(140, $yPos)
-                    $control.Size = New-Object System.Drawing.Size(200, 20)
+                    $control.Location = New-Object System.Drawing.Point(160, $yPos)
+                    $control.Size = New-Object System.Drawing.Size(180, 20)
                     $control.Text = $setting.Value.Default
                 }
             }
@@ -998,7 +1141,7 @@ function Show-VPNTroubleshooterGUI {
         $createButton = New-Object System.Windows.Forms.Button
         $createButton.Location = New-Object System.Drawing.Point(0, 0)
         $createButton.Size = New-Object System.Drawing.Size(150, 30)
-        $createButton.Text = "Create New VPN"
+        $createButton.Text = "Save VPN"
         $createButton.Add_Click({
                 # Validate required fields
                 $missingFields = $basicFields.GetEnumerator() | 
@@ -1066,155 +1209,17 @@ function Show-VPNTroubleshooterGUI {
             })
         $buttonContainer.Controls.Add($createButton)
 
-        # Test Connection Button
-        $testButton = New-Object System.Windows.Forms.Button
-        $testButton.Location = New-Object System.Drawing.Point(160, 0)
-        $testButton.Size = New-Object System.Drawing.Size(150, 30)
-        $testButton.Text = "Test Connection"
-        # Replace the Test Connection Button click handler with:
-        $testButton.Add_Click({
-            if ([string]::IsNullOrWhiteSpace($inputControls['VPN Name'].Text)) {
-                [System.Windows.Forms.MessageBox]::Show(
-                    "Please enter a VPN Name to test",
-                    "Missing Information",
-                    [System.Windows.Forms.MessageBoxButtons]::OK,
-                    [System.Windows.Forms.MessageBoxIcon]::Warning
-                )
-                return
-            }
-
-            # Create test progress form
-            $testForm = New-Object System.Windows.Forms.Form
-            $testForm.Text = "Testing VPN Connection"
-            $testForm.Size = New-Object System.Drawing.Size(400,150)
-            $testForm.StartPosition = 'CenterParent'
-            $testForm.FormBorderStyle = 'FixedDialog'
-            $testForm.MaximizeBox = $false
-            $testForm.MinimizeBox = $false
-
-            $progressBar = New-Object System.Windows.Forms.ProgressBar
-            $progressBar.Location = New-Object System.Drawing.Point(10,20)
-            $progressBar.Size = New-Object System.Drawing.Size(360,20)
-            $progressBar.Style = 'Marquee'
-            $testForm.Controls.Add($progressBar)
-
-            $statusLabel = New-Object System.Windows.Forms.Label
-            $statusLabel.Location = New-Object System.Drawing.Point(10,50)
-            $statusLabel.Size = New-Object System.Drawing.Size(360,20)
-            $statusLabel.Text = "Testing connection..."
-            $testForm.Controls.Add($statusLabel)
-
-            $cancelButton = New-Object System.Windows.Forms.Button
-            $cancelButton.Location = New-Object System.Drawing.Point(150,80)
-            $cancelButton.Size = New-Object System.Drawing.Size(75,23)
-            $cancelButton.Text = "Cancel"
-            $testForm.Controls.Add($cancelButton)
-
-            $testCancelled = $false
-            $cancelButton.Add_Click({
-                $testCancelled = $true
-                $testForm.Close()
-            })
-
-            # Create job to run tests
-            $job = Start-Job -ScriptBlock {
-                param($vpnName)
-                try {
-                    # Try all methods to find the VPN connection
-                    $vpnConfig = Get-VpnConnection -Name $vpnName -ErrorAction Stop
-                    if (-not $vpnConfig) {
-                        $vpnConfig = Get-VpnConnection -Name $vpnName -AllUserConnection -ErrorAction Stop
-                    }
-
-                    if ($vpnConfig) {
-                        $results = @{
-                            "Connection Name" = $vpnConfig.Name
-                            "Server Address" = $vpnConfig.ServerAddress
-                            "Connection Status" = $vpnConfig.ConnectionStatus
-                            "Tunnel Type" = $vpnConfig.TunnelType
-                            "Authentication Method" = $vpnConfig.AuthenticationMethod
-                            "Split Tunneling" = $vpnConfig.SplitTunneling
-                            "Encryption Level" = $vpnConfig.EncryptionLevel
-                        }
-
-                        # Test connectivity with timeout
-                        $ports = @(500, 1701, 4500)
-                        foreach ($port in $ports) {
-                            $portType = switch($port) {
-                                500 { "IKEEXT" }
-                                1701 { "L2TP" }
-                                4500 { "NAT-T" }
-                            }
-                            
-                            $testResult = $false
-                            $timeout = New-TimeSpan -Seconds 10
-                            $sw = [Diagnostics.Stopwatch]::StartNew()
-                            
-                            while ($sw.Elapsed -lt $timeout) {
-                                $test = Test-NetConnection -ComputerName $vpnConfig.ServerAddress -Port $port -WarningAction SilentlyContinue
-                                if ($test.TcpTestSucceeded) {
-                                    $testResult = $true
-                                    break
-                                }
-                                Start-Sleep -Milliseconds 500
-                            }
-                            
-                            $results["Port $port ($portType)"] = if($testResult) { "Open (Response time: $($sw.Elapsed.TotalSeconds) seconds)" } else { "Timeout after 10 seconds" }
-                        }
-                        return $results
-                    }
-                    return $null
-                }
-                catch {
-                    return @{ "Error" = $_.Exception.Message }
-                }
-            } -ArgumentList $inputControls['VPN Name'].Text
-
-            # Show progress form and wait for completion or cancellation
-            $testForm.Show()
-            while (-not $job.HasMoreData -and -not $testCancelled -and $job.State -eq 'Running') {
-                Start-Sleep -Milliseconds 100
-                [System.Windows.Forms.Application]::DoEvents()
-            }
-
-            if ($testCancelled) {
-                Stop-Job $job
-                Update-Status "VPN connection test cancelled by user"
-            }
-            else {
-                $results = Receive-Job $job
-                if ($results) {
-                    if ($results.ContainsKey("Error")) {
-                        Update-Status "Error testing VPN connection: $($results.Error)"
-                    }
-                    else {
-                        $resultsText = ($results.GetEnumerator() | ForEach-Object { "$($_.Key): $($_.Value)" }) -join "`r`n"
-                        Update-Status "Test Results:`r`n$resultsText"
-                    }
-                }
-                else {
-                    Update-Status "Could not find VPN connection: $($inputControls['VPN Name'].Text)"
-                }
-            }
-
-            if ($job.State -eq 'Running') {
-                Stop-Job $job
-            }
-            Remove-Job $job -Force
-            $testForm.Close()
-        })
-        $buttonContainer.Controls.Add($testButton)
-  
+          
         # Diagnostics Tab
         $diagTab = $tabPages["Diagnostics"]
     
+        # Network Analysis
         $diagButtons = @(
-            # Network Analysis
             @{
-                'Text'   = 'Network Stack Info'
-                'Action' = {
+                Text   = 'Network Stack Info'
+                Action = {
                     Update-Status "Gathering Network Stack Information..."
-            
+
                     Update-Status "`nNetwork Adapters:"
                     Get-NetAdapter | ForEach-Object {
                         Update-Status "  $($_.Name):"
@@ -1222,33 +1227,402 @@ function Show-VPNTroubleshooterGUI {
                         Update-Status "    MAC Address: $($_.MacAddress)"
                         Update-Status "    Speed: $($_.LinkSpeed)"
                     }
-            
+
                     Update-Status "`nIP Configuration:"
-                    Get-NetIPConfiguration | ForEach-Object {
-                        Update-Status "  Interface: $($_.InterfaceAlias)"
-                        Update-Status "    IPv4: $($_.IPv4Address.IPAddress)"
-                        Update-Status "    Gateway: $($_.IPv4DefaultGateway.NextHop)"
-                        Update-Status "    DNS: $($_.DNSServer.ServerAddresses -join ', ')"
+                    $ipConfigs = Get-NetIPConfiguration
+                    foreach ($cfg in $ipConfigs) {
+                        Update-Status "  Interface: $($cfg.InterfaceAlias)"
+                        $ip = $cfg.IPv4Address.IPAddress
+                        $gw = $cfg.IPv4DefaultGateway.NextHop
+                        $dns = $cfg.DNSServer.ServerAddresses
+                        Update-Status "    IPv4: $ip"
+                        Update-Status "    Gateway: $gw"
+                        Update-Status "    DNS: $($dns -join ', ')"
+                        # IP Analysis
+                        if ($ip -match '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)') {
+                            $ipType = 'Private'
+                        } else {
+                            $ipType = 'Public'
+                        }
+                        if ($gw) {
+                            $ipParts = $ip -split '\.'
+                            $gwParts = $gw -split '\.'
+                            if ($ipParts[0..2] -join '.' -eq $gwParts[0..2] -join '.') {
+                                $gwRel = 'Gateway is in the same subnet as the IP address.'
+                            } else {
+                                $gwRel = 'Gateway is NOT in the same subnet as the IP address.'
+                            }
+                        } else {
+                            $gwRel = 'No gateway set.'
+                        }
+                        Update-Status "      [Conclusion] IP is $ipType. $gwRel"
+                        # DNS Analysis
+                        $publicDns = @('8.8.8.8','8.8.4.4','1.1.1.1','9.9.9.9')
+                        $dnsType = if ($dns | Where-Object { $publicDns -contains $_ }) { 'Public DNS detected.' } else { 'No well-known public DNS detected.' }
+                        Update-Status "      [Conclusion] $dnsType"
                     }
-            
+
                     Update-Status "`nRouting Table:"
-                    Get-NetRoute -Protocol NetMgmt | ForEach-Object {
-                        Update-Status "  $($_.DestinationPrefix) via $($_.NextHop)"
+                    $routes = Get-NetRoute -Protocol NetMgmt
+                    foreach ($route in $routes) {
+                        Update-Status "  $($route.DestinationPrefix) via $($route.NextHop)"
+                    }
+                    # Route Analysis
+                    $defaultRoute = $routes | Where-Object { $_.DestinationPrefix -eq '0.0.0.0/0' } | Select-Object -First 1
+                    if ($defaultRoute) {
+                        Update-Status "    [Conclusion] Default route points to $($defaultRoute.NextHop). This is the gateway for all outbound traffic."
+                    } else {
+                        Update-Status "    [Conclusion] No default route (0.0.0.0/0) found. Internet access may not be possible."
                     }
                 }
-            },
+            }
             @{
-                'Text'   = 'Test Network Connectivity'
+                'Text'   = 'Comprehensive Network Test'
                 'Action' = {
-                    Update-Status "Testing network connectivity..."
-                    $tests = @(
-                        "8.8.8.8",
-                        $inputControls['Server Address'].Text
-                    )
-                    foreach ($test in $tests) {
-                        $ping = Test-Connection -ComputerName $test -Count 1 -Quiet
-                        Update-Status "Ping test to $test : $(if($ping){'Successful'}else{'Failed'})"
+                    # Create test selection form
+                    $testForm = New-Object System.Windows.Forms.Form
+                    $testForm.Text = "Network Test Configuration"
+                    $testForm.Size = New-Object System.Drawing.Size(500,400)
+                    $testForm.StartPosition = 'CenterParent'
+                    $testForm.FormBorderStyle = 'FixedDialog'
+                    $testForm.MaximizeBox = $false
+                    $testForm.MinimizeBox = $false
+
+                    # Target Selection Group
+                    $targetGroup = New-Object System.Windows.Forms.GroupBox
+                    $targetGroup.Text = "Test Target"
+                    $targetGroup.Location = New-Object System.Drawing.Point(10,10)
+                    $targetGroup.Size = New-Object System.Drawing.Size(460,120)
+                    $testForm.Controls.Add($targetGroup)
+
+                    # VPN Radio Button
+                    $vpnRadio = New-Object System.Windows.Forms.RadioButton
+                    $vpnRadio.Location = New-Object System.Drawing.Point(10,20)
+                    $vpnRadio.Size = New-Object System.Drawing.Size(150,20)
+                    $vpnRadio.Text = "VPN Connection:"
+                    $vpnRadio.Checked = $true
+                    $targetGroup.Controls.Add($vpnRadio)
+
+                    # VPN Selection ComboBox
+                    $vpnComboBox = New-Object System.Windows.Forms.ComboBox
+                    $vpnComboBox.Location = New-Object System.Drawing.Point(170,20)
+                    $vpnComboBox.Size = New-Object System.Drawing.Size(270,20)
+                    $vpnComboBox.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+
+                    # Add "None" option
+                    $vpnComboBox.Items.Add("None (Use Custom Target)")
+
+                    # Populate VPN list with all sources
+                    try {
+                        # Standard VPN connections
+                        Get-VpnConnection -ErrorAction SilentlyContinue | ForEach-Object {
+                            $vpnComboBox.Items.Add($_.Name)
+                        }
+                        # All-user VPN connections
+                        Get-VpnConnection -AllUserConnection -ErrorAction SilentlyContinue | ForEach-Object {
+                            if ($vpnComboBox.Items -notcontains $_.Name) {
+                                $vpnComboBox.Items.Add($_.Name)
+                            }
+                        }
+                    } catch { }
+                    
+                    if ($vpnComboBox.Items.Count -gt 0) {
+                        $vpnComboBox.SelectedIndex = 0
                     }
+                    $targetGroup.Controls.Add($vpnComboBox)
+
+                    # IP/Hostname Radio Button
+                    $ipRadio = New-Object System.Windows.Forms.RadioButton
+                    $ipRadio.Location = New-Object System.Drawing.Point(10,50)
+                    $ipRadio.Size = New-Object System.Drawing.Size(100,20)
+                    $ipRadio.Text = "IP/Hostname:"
+                    $targetGroup.Controls.Add($ipRadio)
+
+                    # IP/Hostname TextBox
+                    $ipTextBox = New-Object System.Windows.Forms.TextBox
+                    $ipTextBox.Location = New-Object System.Drawing.Point(120,50)
+                    $ipTextBox.Size = New-Object System.Drawing.Size(320,20)
+                    $targetGroup.Controls.Add($ipTextBox)
+
+                    # Common Targets Label
+                    $commonLabel = New-Object System.Windows.Forms.Label
+                    $commonLabel.Location = New-Object System.Drawing.Point(10,80)
+                    $commonLabel.Size = New-Object System.Drawing.Size(100,20)
+                    $commonLabel.Text = "Quick Select:"
+                    $targetGroup.Controls.Add($commonLabel)
+
+                    # Common Targets ComboBox
+                    $commonTargets = New-Object System.Windows.Forms.ComboBox
+                    $commonTargets.Location = New-Object System.Drawing.Point(120,80)
+                    $commonTargets.Size = New-Object System.Drawing.Size(320,20)
+                    $commonTargets.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+                    $commonTargets.Items.AddRange(@(
+                        "Select target...",
+                        "Google DNS (8.8.8.8)",
+                        "Cloudflare DNS (1.1.1.1)",
+                        "Google.com",
+                        "Microsoft.com"
+                    ))
+                    $commonTargets.SelectedIndex = 0
+                    $targetGroup.Controls.Add($commonTargets)
+
+                    # Test Options Group
+                    $optionsGroup = New-Object System.Windows.Forms.GroupBox
+                    $optionsGroup.Text = "Test Options"
+                    $optionsGroup.Location = New-Object System.Drawing.Point(10,140)
+                    $optionsGroup.Size = New-Object System.Drawing.Size(460,160)
+                    $testForm.Controls.Add($optionsGroup)
+
+                    # Test Options Checkboxes
+                    $testOptions = @{
+                        pingTest = @{
+                            Text    = "Ping Test (ICMP)"
+                            Y       = 20
+                            Checked = $true
+                        }
+                        dnsTest = @{
+                            Text    = "DNS Resolution"
+                            Y       = 50
+                            Checked = $true
+                        }
+                        traceTest = @{
+                            Text    = "Traceroute"
+                            Y       = 80
+                            Checked = $false
+                        }
+                        portTest = @{
+                            Text    = "VPN Ports (500, 1701, 4500)"
+                            Y       = 110
+                            Checked = $true
+                        }
+                    }
+
+                    $checkboxes = @{}
+                    foreach ($option in $testOptions.GetEnumerator()) {
+                        $checkbox = New-Object System.Windows.Forms.CheckBox
+                        $checkbox.Location = New-Object System.Drawing.Point(10,$option.Value.Y)
+                        $checkbox.Size = New-Object System.Drawing.Size(440,20)
+                        $checkbox.Text = $option.Value.Text
+                        $checkbox.Checked = $option.Value.Checked
+                        $optionsGroup.Controls.Add($checkbox)
+                        $checkboxes[$option.Key] = $checkbox
+                    }
+
+                    # Event Handlers
+                    $vpnRadio.Add_CheckedChanged({
+                        if ($vpnRadio.Checked) {
+                            $vpnComboBox.Enabled = $true
+                            $ipTextBox.Enabled = $false
+                            $commonTargets.Enabled = $false
+                            $checkboxes['portTest'].Enabled = $true
+                        }
+                    })
+
+                    $ipRadio.Add_CheckedChanged({
+                        if ($ipRadio.Checked) {
+                            $vpnComboBox.Enabled = $false
+                            $ipTextBox.Enabled = $true
+                            $commonTargets.Enabled = $true
+                            $checkboxes['portTest'].Enabled = $true
+                        }
+                    })
+
+                    $commonTargets.Add_SelectedIndexChanged({
+                        if ($commonTargets.SelectedIndex -gt 0) {
+                            $target = $commonTargets.SelectedItem
+                            $ipTextBox.Text = switch ($target) {
+                                "Google DNS (8.8.8.8)" { "8.8.8.8" }
+                                "Cloudflare DNS (1.1.1.1)" { "1.1.1.1" }
+                                "Google.com" { "google.com" }
+                                "Microsoft.com" { "microsoft.com" }
+                            }
+                            $ipRadio.Checked = $true
+                        }
+                    })
+
+                    # Start Test Button
+                    $startButton = New-Object System.Windows.Forms.Button
+                    $startButton.Location = New-Object System.Drawing.Point(10,310)
+                    $startButton.Size = New-Object System.Drawing.Size(460,30)
+                    $startButton.Text = "Start Tests"
+                    $startButton.Add_Click({
+                        # Determine test target
+                        if ($vpnRadio.Checked) {
+                            if ($vpnComboBox.SelectedItem) {
+                                $vpnName = $vpnComboBox.SelectedItem
+                                
+                                # Check if "None" is selected
+                                if ($vpnName -eq "None (Use Custom Target)") {
+                                    # Switch to custom IP mode
+                                    $ipRadio.Checked = $true
+                                    $testTarget = $ipTextBox.Text.Trim()
+                                    $testName = "Custom: ${testTarget}"
+                                    
+                                    if ([string]::IsNullOrWhiteSpace($testTarget)) {
+                                        [System.Windows.Forms.MessageBox]::Show(
+                                            "Please enter an IP address or hostname.",
+                                            "Input Required",
+                                            [System.Windows.Forms.MessageBoxButtons]::OK,
+                                            [System.Windows.Forms.MessageBoxIcon]::Warning
+                                        )
+                                        return
+                                    }
+                                }
+                                else {
+                                    try {
+                                        # Try both standard and all-user connections
+                                        $vpn = Get-VpnConnection -Name $vpnName -ErrorAction SilentlyContinue
+                                        if (-not $vpn) {
+                                            $vpn = Get-VpnConnection -Name $vpnName -AllUserConnection -ErrorAction Stop
+                                        }
+                                        $testTarget = $vpn.ServerAddress
+                                        $testName = "VPN: $vpnName (${testTarget})"
+                                    }
+                                    catch {
+                                        [System.Windows.Forms.MessageBox]::Show(
+                                            "Could not retrieve VPN connection details.",
+                                            "VPN Error",
+                                            [System.Windows.Forms.MessageBoxButtons]::OK,
+                                            [System.Windows.Forms.MessageBoxIcon]::Error
+                                        )
+                                        return
+                                    }
+                                }
+                            }
+                            else {
+                                [System.Windows.Forms.MessageBox]::Show(
+                                    "Please select a VPN connection.",
+                                    "Selection Required",
+                                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                                    [System.Windows.Forms.MessageBoxIcon]::Warning
+                                )
+                                return
+                            }
+                        }
+                        else {
+                            $testTarget = $ipTextBox.Text.Trim()
+                            $testName = "Custom: ${testTarget}"
+                            if ([string]::IsNullOrWhiteSpace($testTarget)) {
+                                [System.Windows.Forms.MessageBox]::Show(
+                                    "Please enter an IP address or hostname.",
+                                    "Input Required",
+                                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                                    [System.Windows.Forms.MessageBoxIcon]::Warning
+                                )
+                                return
+                            }
+                        }
+
+                        Update-Status "Starting network tests for ${testName}..."
+
+                        # Ping Test
+                        if ($checkboxes['pingTest'].Checked) {
+                            Update-Status "`nPing Test:"
+                            try {
+                                $pingResults = Test-Connection -ComputerName ${testTarget} -Count 4 -ErrorAction Stop
+                                
+                                Update-Status "  Target: ${testTarget}"
+                                $pingResults | ForEach-Object {
+                                    Update-Status "  Reply from $($_.Address): time=$($_.ResponseTime)ms"
+                                }
+                                
+                                $avgTime = ($pingResults | Measure-Object -Property ResponseTime -Average).Average
+                                Update-Status "  Average response time: $([math]::Round($avgTime, 2))ms"
+                            }
+                            catch {
+                                Update-Status "  Failed to ping ${testTarget}: $($_.Exception.Message)"
+                            }
+                        }
+
+                        # DNS Resolution Test
+                        if ($checkboxes['dnsTest'].Checked) {
+                            Update-Status "`nDNS Resolution Test:"
+                            try {
+                                # If input is IP, do reverse lookup
+                                if (${testTarget} -match "^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$") {
+                                    $reverseDns = Resolve-DnsName -Name ${testTarget} -ErrorAction Stop -Type PTR
+                                    
+                                    Update-Status "  IP Address: ${testTarget}"
+                                    foreach ($record in $reverseDns) {
+                                        Update-Status "  Hostname: $($record.NameHost)"
+                                    }
+                                }
+                                # If input is hostname, do forward lookup
+                                else {
+                                    $dnsResult = Resolve-DnsName -Name ${testTarget} -ErrorAction Stop
+                                    
+                                    Update-Status "  Hostname: ${testTarget}"
+                                    foreach ($record in $dnsResult) {
+                                        if ($record.Type -in @("A", "AAAA")) {
+                                            Update-Status "  IP Address: $($record.IPAddress)"
+                                        }
+                                    }
+                                }
+                            }
+                            catch {
+                                Update-Status "  DNS resolution failed: $($_.Exception.Message)"
+                            }
+                        }
+
+                        # Traceroute Test
+                        if ($checkboxes['traceTest'].Checked) {
+                            Update-Status "`nTraceroute Test:"
+                            try {
+                                $traceResults = Test-NetConnection -ComputerName ${testTarget} -TraceRoute -ErrorAction Stop
+                                
+                                Update-Status "  Tracing route to ${testTarget}"
+                                $hop = 1
+                                foreach ($node in $traceResults.TraceRoute) {
+                                    Update-Status "  $hop. $node"
+                                    $hop++
+                                }
+                            }
+                            catch {
+                                Update-Status "  Traceroute failed: $($_.Exception.Message)"
+                            }
+                        }
+
+                        # VPN Port Test
+                        if ($checkboxes['portTest'].Checked) {
+                            Update-Status "`nVPN Port Test:"
+                            $ports = @{
+                                500 = "IKE"
+                                1701 = "L2TP"
+                                4500 = "NAT-T"
+                            }
+                            foreach ($port in $ports.GetEnumerator()) {
+                                try {
+                                    $portTest = Test-NetConnection -ComputerName ${testTarget} -Port $port.Key -WarningAction SilentlyContinue
+                                    $status = if ($portTest.TcpTestSucceeded) { "Open" } else { "Closed" }
+                                    Update-Status "  Port $($port.Key) ($($port.Value)): $status"
+                                }
+                                catch {
+                                    Update-Status "  Port $($port.Key) test failed: $($_.Exception.Message)"
+                                }
+                            }
+                        }
+
+                        # Network Interface Information
+                        Update-Status "`nNetwork Interface Information:"
+                        try {
+                            $activeAdapter = Get-NetAdapter | Where-Object Status -eq 'Up' | Sort-Object -Property Speed -Descending | Select-Object -First 1
+                            if ($activeAdapter) {
+                                Update-Status "  Primary Network Adapter: $($activeAdapter.Name)"
+                                Update-Status "  Status: $($activeAdapter.Status)"
+                                Update-Status "  Speed: $($activeAdapter.LinkSpeed)"
+                                Update-Status "  MAC Address: $($activeAdapter.MacAddress)"
+                            }
+                        }
+                        catch {
+                            Update-Status "  Failed to retrieve network interface information: $($_.Exception.Message)"
+                        }
+
+                        $testForm.Close()
+                    })
+                    $testForm.Controls.Add($startButton)
+
+                    # Show the form
+                    $testForm.ShowDialog()
                 }
             },
             @{
@@ -1269,7 +1643,6 @@ function Show-VPNTroubleshooterGUI {
                     Update-Status "`nRequired Services:"
                     $services = @{
                         'RasMan'       = 'Remote Access Connection Manager - Manages VPN connections'
-                        'RemoteAccess' = 'Routing and Remote Access - Provides VPN server functionality'
                         'PolicyAgent'  = 'IPsec Policy Agent - Handles IPsec security policies'
                         'IKEEXT'       = 'IKE and AuthIP IPsec Keying Modules - Manages security associations'
                     }
@@ -1315,285 +1688,114 @@ function Show-VPNTroubleshooterGUI {
                     }
                 }
             },
-            @{
-                'Text' = 'Analyze VPN Connection'
-                'Action' = {
-                    # Create analysis selection form
-                    $analysisForm = New-Object System.Windows.Forms.Form
-                    $analysisForm.Text = "Select VPN for Analysis"
-                    $analysisForm.Size = New-Object System.Drawing.Size(400,150)
-                    $analysisForm.StartPosition = 'CenterParent'
-                    $analysisForm.FormBorderStyle = 'FixedDialog'
-                    $analysisForm.MaximizeBox = $false
-                    $analysisForm.MinimizeBox = $false
 
-                    # VPN Selection ComboBox
-                    $vpnLabel = New-Object System.Windows.Forms.Label
-                    $vpnLabel.Location = New-Object System.Drawing.Point(10,20)
-                    $vpnLabel.Size = New-Object System.Drawing.Size(100,20)
-                    $vpnLabel.Text = "Select VPN:"
-                    $analysisForm.Controls.Add($vpnLabel)
-
-                    $vpnComboBox = New-Object System.Windows.Forms.ComboBox
-                    $vpnComboBox.Location = New-Object System.Drawing.Point(120,20)
-                    $vpnComboBox.Size = New-Object System.Drawing.Size(250,20)
-                    $vpnComboBox.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
-
-                    # Populate VPN list with all sources
-                    try {
-                        # Standard VPN connections
-                        Get-VpnConnection -ErrorAction SilentlyContinue | ForEach-Object {
-                            $vpnComboBox.Items.Add($_.Name)
-                        }
-                        # All-user VPN connections
-                        Get-VpnConnection -AllUserConnection -ErrorAction SilentlyContinue | ForEach-Object {
-                            if ($vpnComboBox.Items -notcontains $_.Name) {
-                                $vpnComboBox.Items.Add($_.Name)
-                            }
-                        }
-                    } catch { }
-                    
-                    if ($vpnComboBox.Items.Count -gt 0) {
-                        $vpnComboBox.SelectedIndex = 0
-                    }
-                    $analysisForm.Controls.Add($vpnComboBox)
-
-                    # Analyze Button
-                    $analyzeButton = New-Object System.Windows.Forms.Button
-                    $analyzeButton.Location = New-Object System.Drawing.Point(10,60)
-                    $analyzeButton.Size = New-Object System.Drawing.Size(360,30)
-                    $analyzeButton.Text = "Start Analysis"
-                    $analyzeButton.Add_Click({
-                        $vpnName = $vpnComboBox.SelectedItem
-                        if ($vpnName) {
-                            # Create progress form
-                            $progressForm = New-Object System.Windows.Forms.Form
-                            $progressForm.Text = "Analyzing VPN Connection"
-                            $progressForm.Size = New-Object System.Drawing.Size(400,150)
-                            $progressForm.StartPosition = 'CenterParent'
-                            $progressForm.FormBorderStyle = 'FixedDialog'
-                            $progressForm.MaximizeBox = $false
-                            $progressForm.MinimizeBox = $false
-
-                            $progressBar = New-Object System.Windows.Forms.ProgressBar
-                            $progressBar.Location = New-Object System.Drawing.Point(10,20)
-                            $progressBar.Size = New-Object System.Drawing.Size(360,20)
-                            $progressBar.Style = 'Marquee'
-                            $progressForm.Controls.Add($progressBar)
-
-                            $statusLabel = New-Object System.Windows.Forms.Label
-                            $statusLabel.Location = New-Object System.Drawing.Point(10,50)
-                            $statusLabel.Size = New-Object System.Drawing.Size(360,20)
-                            $statusLabel.Text = "Analyzing connection..."
-                            $progressForm.Controls.Add($statusLabel)
-
-                            $cancelButton = New-Object System.Windows.Forms.Button
-                            $cancelButton.Location = New-Object System.Drawing.Point(150,80)
-                            $cancelButton.Size = New-Object System.Drawing.Size(75,23)
-                            $cancelButton.Text = "Cancel"
-                            $progressForm.Controls.Add($cancelButton)
-
-                            $analysisCancelled = $false
-                            $cancelButton.Add_Click({
-                                $analysisCancelled = $true
-                                $progressForm.Close()
-                            })
-
-                            # Create analysis job
-                            $job = Start-Job -ScriptBlock {
-                                param($vpnName)
-                                try {
-                                    # Try both standard and all-user connections
-                                    $vpn = Get-VpnConnection -Name $vpnName -ErrorAction SilentlyContinue
-                                    if (-not $vpn) {
-                                        $vpn = Get-VpnConnection -Name $vpnName -AllUserConnection -ErrorAction Stop
-                                    }
-
-                                    $results = @{
-                                        "Connection Details" = @{
-                                            "Status" = $vpn.ConnectionStatus
-                                            "Server Address" = $vpn.ServerAddress
-                                            "Authentication Method" = $vpn.AuthenticationMethod
-                                            "Encryption Level" = $vpn.EncryptionLevel
-                                            "Split Tunneling" = $vpn.SplitTunneling
-                                        }
-                                        "Port Tests" = @{}
-                                        "Event Logs" = @()
-                                        "Network Interface" = @{}
-                                    }
-
-                                    # Test ports with timeout
-                                    $ports = @{
-                                        500 = 'IKE'
-                                        4500 = 'NAT-T'
-                                        1701 = 'L2TP'
-                                    }
-                                    foreach ($port in $ports.Keys) {
-                                        $testResult = $false
-                                        $timeout = New-TimeSpan -Seconds 10
-                                        $sw = [Diagnostics.Stopwatch]::StartNew()
-                                        
-                                        while ($sw.Elapsed -lt $timeout) {
-                                            $test = Test-NetConnection -ComputerName $vpn.ServerAddress -Port $port -WarningAction SilentlyContinue
-                                            if ($test.TcpTestSucceeded) {
-                                                $testResult = $true
-                                                break
-                                            }
-                                            Start-Sleep -Milliseconds 500
-                                        }
-                                        
-                                        $results.PortTests["$port ($($ports[$port]))"] = if($testResult) {
-                                            "Open (Response time: $($sw.Elapsed.TotalSeconds) seconds)"
-                                        } else {
-                                            "Timeout after 10 seconds"
-                                        }
-                                    }
-
-                                    # Get recent event logs
-                                    $events = Get-WinEvent -FilterHashtable @{
-                                        LogName = 'Application','System'
-                                        StartTime = (Get-Date).AddHours(-1)
-                                        Keywords = 'RasClient','PPP','L2TP','IKE'
-                                    } -MaxEvents 10 -ErrorAction SilentlyContinue
-
-                                    $results.EventLogs = $events | ForEach-Object {
-                                        "$($_.TimeCreated) - $($_.Message)"
-                                    }
-
-                                    # Check network interface
-                                    $vpnAdapter = Get-NetAdapter | Where-Object { 
-                                        $_.InterfaceDescription -like "*WAN Miniport (L2TP)*" 
-                                    }
-                                    if ($vpnAdapter) {
-                                        $results.NetworkInterface = @{
-                                            "Status" = $vpnAdapter.Status
-                                            "Speed" = $vpnAdapter.LinkSpeed
-                                            "MediaState" = $vpnAdapter.MediaConnectionState
-                                        }
-                                    }
-
-                                    return $results
-                                }
-                                catch {
-                                    return @{ "Error" = $_.Exception.Message }
-                                }
-                            } -ArgumentList $vpnName
-
-                            # Show progress form and monitor job
-                            $progressForm.Show()
-                            while (-not $job.HasMoreData -and -not $analysisCancelled -and $job.State -eq 'Running') {
-                                Start-Sleep -Milliseconds 100
-                                [System.Windows.Forms.Application]::DoEvents()
-                            }
-
-                            if ($analysisCancelled) {
-                                Stop-Job $job
-                                Update-Status "VPN analysis cancelled by user"
-                            }
-                            else {
-                                $results = Receive-Job $job
-                                if ($results) {
-                                    if ($results.ContainsKey("Error")) {
-                                        Update-Status "Error analyzing VPN: $($results.Error)"
-                                    }
-                                    else {
-                                        Update-Status "Analysis Results for " + $vpnName + ":"
-                                        
-                                        Update-Status "`nConnection Details:"
-                                        foreach ($detail in $results."Connection Details".GetEnumerator()) {
-                                            Update-Status "  $($detail.Key): $($detail.Value)"
-                                        }
-
-                                        Update-Status "`nPort Tests:"
-                                        foreach ($port in $results.PortTests.GetEnumerator()) {
-                                            Update-Status "  $($port.Key): $($port.Value)"
-                                        }
-
-                                        if ($results.EventLogs.Count -gt 0) {
-                                            Update-Status "`nRecent Event Logs:"
-                                            foreach ($event in $results.EventLogs) {
-                                                Update-Status "  $event"
-                                            }
-                                        }
-
-                                        if ($results.NetworkInterface.Count -gt 0) {
-                                            Update-Status "`nNetwork Interface:"
-                                            foreach ($detail in $results.NetworkInterface.GetEnumerator()) {
-                                                Update-Status "  $($detail.Key): $($detail.Value)"
-                                            }
-                                        }
-                                    }
-                                }
-                                else {
-                                    Update-Status "No results returned from analysis"
-                                }
-                            }
-
-                            if ($job.State -eq 'Running') {
-                                Stop-Job $job
-                            }
-                            Remove-Job $job -Force
-                            $progressForm.Close()
-                            $analysisForm.Close()
-                        }
-                        else {
-                            [System.Windows.Forms.MessageBox]::Show(
-                                "Please select a VPN connection to analyze",
-                                "No VPN Selected",
-                                [System.Windows.Forms.MessageBoxButtons]::OK,
-                                [System.Windows.Forms.MessageBoxIcon]::Warning
-                            )
-                        }
-                    })
-                    $analysisForm.Controls.Add($analyzeButton)
-
-                    # Show the form
-                    $analysisForm.ShowDialog()
-                }
-            },
             @{
                 'Text'   = 'Repair VPN Connection'
                 'Action' = {
                     # Create repair options form
                     $repairForm = New-Object System.Windows.Forms.Form
                     $repairForm.Text = "VPN Repair Options"
-                    $repairForm.Size = New-Object System.Drawing.Size(400, 300)
+                    $repairForm.Size = New-Object System.Drawing.Size(400, 450)
                     $repairForm.StartPosition = 'CenterParent'
-
-                    # VPN Selection ComboBox
-                    $vpnLabel = New-Object System.Windows.Forms.Label
-                    $vpnLabel.Location = New-Object System.Drawing.Point(10, 20)
-                    $vpnLabel.Size = New-Object System.Drawing.Size(100, 20)
-                    $vpnLabel.Text = "Select VPN:"
-                    $repairForm.Controls.Add($vpnLabel)
-
+            
+                    # VPN Selection Group
+                    $vpnGroup = New-Object System.Windows.Forms.GroupBox
+                    $vpnGroup.Text = "VPN Selection"
+                    $vpnGroup.Location = New-Object System.Drawing.Point(10, 10)
+                    $vpnGroup.Size = New-Object System.Drawing.Size(360, 60)
+                    $repairForm.Controls.Add($vpnGroup)
+            
                     $vpnComboBox = New-Object System.Windows.Forms.ComboBox
-                    $vpnComboBox.Location = New-Object System.Drawing.Point(120, 20)
-                    $vpnComboBox.Size = New-Object System.Drawing.Size(250, 20)
+                    $vpnComboBox.Location = New-Object System.Drawing.Point(10, 20)
+                    $vpnComboBox.Size = New-Object System.Drawing.Size(340, 20)
                     $vpnComboBox.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
             
-                    # Populate VPN list
-                    Get-VpnConnection -ErrorAction SilentlyContinue | ForEach-Object {
-                        $vpnComboBox.Items.Add($_.Name)
+                    # Populate VPN list with both user and all-user connections
+                    try {
+                        # Standard VPN connections
+                        Get-VpnConnection -ErrorAction SilentlyContinue | ForEach-Object {
+                            $vpnComboBox.Items.Add("$($_.Name) (User)")
+                        }
+                        
+                        # All-user VPN connections
+                        Get-VpnConnection -AllUserConnection -ErrorAction SilentlyContinue | ForEach-Object {
+                            $vpnComboBox.Items.Add("$($_.Name) (All Users)")
+                        }
+                    } catch {
+                        Update-Status "Error getting VPN connections: $($_.Exception.Message)"
                     }
+            
                     if ($vpnComboBox.Items.Count -gt 0) {
                         $vpnComboBox.SelectedIndex = 0
                     }
-                    $repairForm.Controls.Add($vpnComboBox)
-
+                    $vpnGroup.Controls.Add($vpnComboBox)
+            
+                    # Credentials Group
+                    $credGroup = New-Object System.Windows.Forms.GroupBox
+                    $credGroup.Text = "VPN Credentials"
+                    $credGroup.Location = New-Object System.Drawing.Point(10, 80)
+                    $credGroup.Size = New-Object System.Drawing.Size(360, 150)
+                    $repairForm.Controls.Add($credGroup)
+            
+                    # PSK Field
+                    $pskLabel = New-Object System.Windows.Forms.Label
+                    $pskLabel.Text = "Pre-shared Key (PSK)*:"
+                    $pskLabel.Location = New-Object System.Drawing.Point(10, 20)
+                    $pskLabel.Size = New-Object System.Drawing.Size(130, 20)
+                    $credGroup.Controls.Add($pskLabel)
+            
+                    $pskBox = New-Object System.Windows.Forms.TextBox
+                    $pskBox.Location = New-Object System.Drawing.Point(140, 20)
+                    $pskBox.Size = New-Object System.Drawing.Size(210, 20)
+                    $pskBox.PasswordChar = '*'
+                    $credGroup.Controls.Add($pskBox)
+            
+                    # Username Field
+                    $userLabel = New-Object System.Windows.Forms.Label
+                    $userLabel.Text = "Username:"
+                    $userLabel.Location = New-Object System.Drawing.Point(10, 50)
+                    $userLabel.Size = New-Object System.Drawing.Size(130, 20)
+                    $credGroup.Controls.Add($userLabel)
+            
+                    $userBox = New-Object System.Windows.Forms.TextBox
+                    $userBox.Location = New-Object System.Drawing.Point(140, 50)
+                    $userBox.Size = New-Object System.Drawing.Size(210, 20)
+                    $credGroup.Controls.Add($userBox)
+            
+                    # Password Field
+                    $passLabel = New-Object System.Windows.Forms.Label
+                    $passLabel.Text = "Password:"
+                    $passLabel.Location = New-Object System.Drawing.Point(10, 80)
+                    $passLabel.Size = New-Object System.Drawing.Size(130, 20)
+                    $credGroup.Controls.Add($passLabel)
+            
+                    $passBox = New-Object System.Windows.Forms.TextBox
+                    $passBox.Location = New-Object System.Drawing.Point(140, 80)
+                    $passBox.Size = New-Object System.Drawing.Size(210, 20)
+                    $passBox.PasswordChar = '*'
+                    $credGroup.Controls.Add($passBox)
+            
+                    # Remember credentials checkbox
+                    $rememberCred = New-Object System.Windows.Forms.CheckBox
+                    $rememberCred.Text = "Remember credentials"
+                    $rememberCred.Location = New-Object System.Drawing.Point(140, 110)
+                    $rememberCred.Size = New-Object System.Drawing.Size(210, 20)
+                    $rememberCred.Checked = $true
+                    $credGroup.Controls.Add($rememberCred)
+            
                     # Repair Options Group
                     $optionsGroup = New-Object System.Windows.Forms.GroupBox
                     $optionsGroup.Text = "Repair Options"
-                    $optionsGroup.Location = New-Object System.Drawing.Point(10, 50)
-                    $optionsGroup.Size = New-Object System.Drawing.Size(360, 150)
+                    $optionsGroup.Location = New-Object System.Drawing.Point(10, 240)
+                    $optionsGroup.Size = New-Object System.Drawing.Size(360, 120)
+                    $repairForm.Controls.Add($optionsGroup)
             
                     $options = @{
-                        'RestartServices' = "Restart VPN Services"
-                        'ClearDNS'        = "Clear DNS Cache"
-                        'ResetIPSec'      = "Reset IPSec Policies"
-                        'RecreateVPN'     = "Recreate VPN Connection"
+                        'RestartServices' = "Restart VPN Client Services"
+                        'ClearDNS'       = "Clear DNS Cache"
+                        'RecreateVPN'    = "Recreate VPN Connection"
                     }
-
+            
                     $yPos = 20
                     $checkboxes = @{}
                     foreach ($option in $options.GetEnumerator()) {
@@ -1606,74 +1808,136 @@ function Show-VPNTroubleshooterGUI {
                         $optionsGroup.Controls.Add($checkbox)
                         $yPos += 25
                     }
-                    $repairForm.Controls.Add($optionsGroup)
-
+            
                     # Repair Button
                     $repairButton = New-Object System.Windows.Forms.Button
-                    $repairButton.Location = New-Object System.Drawing.Point(10, 210)
+                    $repairButton.Location = New-Object System.Drawing.Point(10, 370)
                     $repairButton.Size = New-Object System.Drawing.Size(360, 30)
                     $repairButton.Text = "Start Repair"
                     $repairButton.Add_Click({
-                            $vpnName = $vpnComboBox.SelectedItem
-                            if ($vpnName) {
-                                Update-Status "Starting repair for VPN connection: $vpnName"
-                    
-                                # Backup current configuration
-                                Update-Status "Creating backup before repair..."
-                                Backup-VPNConfiguration
-                    
+                        $selectedItem = $vpnComboBox.SelectedItem
+                        if (-not $selectedItem) {
+                            [System.Windows.Forms.MessageBox]::Show(
+                                "Please select a VPN connection.",
+                                "Selection Required",
+                                [System.Windows.Forms.MessageBoxButtons]::OK,
+                                [System.Windows.Forms.MessageBoxIcon]::Warning
+                            )
+                            return
+                        }
+            
+                        # Extract VPN name and type from selection
+                        $vpnName = $selectedItem -replace ' \((User|All Users)\)$', ''
+                        $isAllUserVPN = $selectedItem -match 'All Users'
+            
+                        if ([string]::IsNullOrWhiteSpace($pskBox.Text)) {
+                            [System.Windows.Forms.MessageBox]::Show(
+                                "Pre-shared Key (PSK) is required.",
+                                "Required Field",
+                                [System.Windows.Forms.MessageBoxButtons]::OK,
+                                [System.Windows.Forms.MessageBoxIcon]::Warning
+                            )
+                            return
+                        }
+            
+                        Update-Status "Starting repair for VPN connection: $vpnName ($(if ($isAllUserVPN) { 'All Users' } else { 'User' }))"
+            
+                        # Backup current configuration
+                        Update-Status "Creating backup..."
+                        Backup-VPNConfiguration -VPNName $vpnName
+            
+                        # Get existing VPN settings
+                        try {
+                            $existingVPN = if ($isAllUserVPN) {
+                                Get-VpnConnection -Name $vpnName -AllUserConnection -ErrorAction Stop
+                            } else {
+                                Get-VpnConnection -Name $vpnName -ErrorAction Stop
+                            }
+            
+                            if ($existingVPN) {
+                                $vpnParams = @{
+                                    Name = $vpnName
+                                    ServerAddress = $existingVPN.ServerAddress
+                                    TunnelType = "L2tp"
+                                    EncryptionLevel = $existingVPN.EncryptionLevel
+                                    AuthenticationMethod = $existingVPN.AuthenticationMethod
+                                    SplitTunneling = $existingVPN.SplitTunneling
+                                    RememberCredential = $rememberCred.Checked
+                                    L2tpPsk = $pskBox.Text
+                                    Force = $true
+                                }
+            
+                                # Add AllUserConnection parameter if it's an all-user VPN
+                                if ($isAllUserVPN) {
+                                    $vpnParams.AllUserConnection = $true
+                                }
+            
                                 # Restart Services if selected
                                 if ($checkboxes['RestartServices'].Checked) {
-                                    $services = @('RasMan', 'RemoteAccess', 'PolicyAgent', 'IKEEXT')
+                                    $services = @('RasMan', 'RemoteAccess')
                                     foreach ($service in $services) {
-                                        Update-Status "  Restarting $service service..."
-                                        Stop-Service -Name $service -Force -ErrorAction SilentlyContinue
+                                        Update-Status "Restarting $service service..."
+                                        Restart-Service -Name $service -Force -ErrorAction SilentlyContinue
                                         Start-Sleep -Seconds 2
-                                        Start-Service -Name $service -ErrorAction SilentlyContinue
                                     }
                                 }
-                    
+            
                                 # Clear DNS if selected
                                 if ($checkboxes['ClearDNS'].Checked) {
-                                    Update-Status "  Clearing DNS cache..."
+                                    Update-Status "Clearing DNS cache..."
                                     Clear-DnsClientCache
                                 }
-                    
-                                # Reset IPSec if selected
-                                if ($checkboxes['ResetIPSec'].Checked) {
-                                    Update-Status "  Resetting IPsec policies..."
-                                    $null = netsh ipsec static delete all
-                                }
-                    
+            
                                 # Recreate VPN if selected
                                 if ($checkboxes['RecreateVPN'].Checked) {
-                                    Update-Status "  Recreating VPN connection..."
-                                    $vpn = Get-VpnConnection -Name $vpnName
-                                    $vpnParams = @{
-                                        Name                 = $vpn.Name
-                                        ServerAddress        = $vpn.ServerAddress
-                                        TunnelType           = $vpn.TunnelType
-                                        EncryptionLevel      = $vpn.EncryptionLevel
-                                        AuthenticationMethod = $vpn.AuthenticationMethod
-                                        SplitTunneling       = $vpn.SplitTunneling
-                                        RememberCredential   = $vpn.RememberCredential
-                                        Force                = $true
+                                    Update-Status "Recreating VPN connection..."
+                                    
+                                    # Remove existing connection
+                                    if ($isAllUserVPN) {
+                                        Remove-VpnConnection -Name $vpnName -AllUserConnection -Force -ErrorAction SilentlyContinue
+                                    } else {
+                                        Remove-VpnConnection -Name $vpnName -Force -ErrorAction SilentlyContinue
                                     }
-                        
-                                    Remove-VpnConnection -Name $vpnName -Force
+            
+                                    # Create new connection
                                     Add-VpnConnection @vpnParams
+            
+                                    # Set credentials if provided
+                                    if (-not [string]::IsNullOrWhiteSpace($userBox.Text)) {
+                                        $password = $passBox.Text | ConvertTo-SecureString -AsPlainText -Force
+                                        $cred = New-Object System.Management.Automation.PSCredential ($userBox.Text, $password)
+                                        
+                                        # Set VPN connection credentials
+                                        if ($isAllUserVPN) {
+                                            Set-VpnConnection -Name $vpnName -AllUserConnection -RememberCredential $rememberCred.Checked
+                                        } else {
+                                            Set-VpnConnection -Name $vpnName -RememberCredential $rememberCred.Checked
+                                        }
+            
+                                        # Store credentials if remember is checked
+                                        if ($rememberCred.Checked) {
+                                            cmdkey /add:$existingVPN.ServerAddress /user:$userBox.Text /pass:$passBox.Text
+                                        }
+                                    }
                                 }
-                    
+            
                                 Update-Status "VPN connection repair completed"
                                 Update-VPNList
                                 $repairForm.Close()
                             }
-                            else {
-                                Update-Status "Please select a VPN connection to repair"
-                            }
-                        })
+                        }
+                        catch {
+                            Update-Status "Error during VPN repair: $($_.Exception.Message)"
+                            [System.Windows.Forms.MessageBox]::Show(
+                                "Error during VPN repair: $($_.Exception.Message)",
+                                "Repair Error",
+                                [System.Windows.Forms.MessageBoxButtons]::OK,
+                                [System.Windows.Forms.MessageBoxIcon]::Error
+                            )
+                        }
+                    })
                     $repairForm.Controls.Add($repairButton)
-
+            
                     # Show the form
                     $repairForm.ShowDialog()
                 }
@@ -1683,11 +1947,11 @@ function Show-VPNTroubleshooterGUI {
         $buttonConfig = @{
             StartX            = 10
             StartY            = 20
-            Width             = 180
+            Width             = 220
             Height            = 30
             HorizontalSpacing = 10
             VerticalSpacing   = 10
-            ButtonsPerColumn  = 5
+            ButtonsPerColumn  = 10
         }
 
         # Create and position buttons
@@ -1707,10 +1971,10 @@ function Show-VPNTroubleshooterGUI {
         }
 
         # Adjust results textbox position based on buttons
-        $resultsStartX = $buttonConfig.StartX + (2 * ($buttonConfig.Width + $buttonConfig.HorizontalSpacing))
+        $resultsStartX = $buttonConfig.StartX + ($buttonConfig.Width + $buttonConfig.HorizontalSpacing)
         $diagResults = New-Object System.Windows.Forms.TextBox
         $diagResults.Location = New-Object System.Drawing.Point($resultsStartX, $buttonConfig.StartY)
-        $diagResults.Size = New-Object System.Drawing.Size(350, 500)
+        $diagResults.Size = New-Object System.Drawing.Size(500, 500)
         $diagResults.Multiline = $true
         $diagResults.ScrollBars = 'Vertical'
         $diagResults.ReadOnly = $true
@@ -1720,14 +1984,14 @@ function Show-VPNTroubleshooterGUI {
         $logsTab = $tabPages["Logs"]
     
         $logsTextBox = New-Object System.Windows.Forms.TextBox
-        $logsTextBox.Location = New-Object System.Drawing.Point(10, 40)
+        $logsTextBox.Location = New-Object System.Drawing.Point(12, 40)
         $logsTextBox.Size = New-Object System.Drawing.Size(740, 480)
         $logsTextBox.Multiline = $true
         $logsTextBox.ScrollBars = 'Vertical'
         $logsTextBox.ReadOnly = $true
     
         $refreshButton = New-Object System.Windows.Forms.Button
-        $refreshButton.Location = New-Object System.Drawing.Point(10, 10)
+        $refreshButton.Location = New-Object System.Drawing.Point(12, 10)
         $refreshButton.Size = New-Object System.Drawing.Size(100, 25)
         $refreshButton.Text = "Refresh Logs"
         $refreshButton.Add_Click({
