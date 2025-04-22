@@ -5,7 +5,8 @@ Version 0.16 "EVENT HORIZON EDITION"
 A comprehensive PowerShell-based GUI tool for troubleshooting, managing, and repairing L2TP VPN connections on Windows systems. This tool provides a user-friendly interface for common VPN management tasks and advanced diagnostics.
 
 ![CleanShot 2025-04-21 at 15 41 06](https://github.com/user-attachments/assets/ea0fcd5f-75f0-4912-ac1a-e04da0b4da59)
-![CleanShot 2025-04-21 at 15 52 54](https://github.com/user-attachments/assets/2cc4cfcd-e99a-4756-8844-cb7121112525)
+![CleanShot 2025-04-22 at 13 18 52](https://github.com/user-attachments/assets/d36f5ecc-eb4a-4a8a-b333-f37e34f534cb)
+
 
 
 ## Features
