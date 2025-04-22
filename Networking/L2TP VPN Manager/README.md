@@ -80,12 +80,7 @@ Before running the script for the first time, you may need to configure your Pow
    - At the bottom of the General tab, check "Unblock" if present
    - Click "Apply" and "OK"
 
-3. **Verify Required Services**:
-   - Ensure the following services are set to Automatic (the script will check these):
-     - Remote Access Connection Manager
-     - IKE and AuthIP IPsec Keying Modules
-     - IPsec Policy Agent
-     
+
 ## Installation
 1. Download the script file (`VPNTroubleshooterGUI.ps1`)
 2. Right-click the file and select "Run with PowerShell" or
