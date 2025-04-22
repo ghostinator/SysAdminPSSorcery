@@ -1,5 +1,5 @@
 # L2TP VPN Troubleshooter GUI
-Version 0.15 "OMFG MY HEAD HURTS EDITION"
+Version 0.16 "EVENT HORIZON EDITION"
 
 ## Overview
 A comprehensive PowerShell-based GUI tool for troubleshooting, managing, and repairing L2TP VPN connections on Windows systems. This tool provides a user-friendly interface for common VPN management tasks and advanced diagnostics.
@@ -29,6 +29,11 @@ A comprehensive PowerShell-based GUI tool for troubleshooting, managing, and rep
   - L2TP/IPsec Component Check
   - Firewall Rule Analysis
   - Registry Settings Validation
+- VPN Event Log Review
+  - Client VPN connectivity events
+  - RasClient and RasMan event sources
+  - VPN-specific error codes
+  - Connection attempt history
 
 ### Repair Tools
 - Network Stack Reset
@@ -86,6 +91,8 @@ A comprehensive PowerShell-based GUI tool for troubleshooting, managing, and rep
 2. Use **Network Stack Info** for basic connectivity information.
 3. Run **Comprehensive Network Test** for detailed analysis.
 4. Check VPN prerequisites using **Check VPN Prerequisites**.
+5. Review VPN-related event logs with **Review VPN Event Logs**.
+
 
 ---
 
@@ -130,6 +137,7 @@ A comprehensive PowerShell-based GUI tool for troubleshooting, managing, and rep
 - Run Comprehensive Network Test  
 - Verify port accessibility  
 - Check PSK and credentials
+- Review VPN Event Logs for specific error codes
 
 ---
 
