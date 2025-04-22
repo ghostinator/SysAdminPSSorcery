@@ -1276,8 +1276,9 @@ function Show-VPNTroubleshooterGUI {
                     }
                 }
             }
+            
             @{
-                'Text'   = 'Comprehensive Network Test'
+                'Text'   = 'Network Tests'
                 'Action' = {
                     # Create test selection form
                     $testForm = New-Object System.Windows.Forms.Form
@@ -1623,6 +1624,139 @@ function Show-VPNTroubleshooterGUI {
 
                     # Show the form
                     $testForm.ShowDialog()
+                }
+            },
+            @{
+                'Text'   = 'Review VPN Event Logs'
+                'Action' = {
+                    Update-Status "Retrieving VPN client connectivity logs..."
+                    $diagResults.Clear()
+                    $diagResults.AppendText("=== VPN Client Connectivity Logs (Last 3 Days) ===`r`n`r`n")
+                    
+                    # Define client-specific VPN event sources
+                    $vpnClientSources = @(
+                        @{LogName = "Application"; ProviderName = "RasClient"},
+                        @{LogName = "System"; ProviderName = "RasMan"}
+                    )
+                    
+                    $since = (Get-Date).AddDays(-3) # Last 3 days of logs
+                    $foundEvents = $false
+                    
+                    # Process each client-specific event source
+                    foreach ($src in $vpnClientSources) {
+                        $diagResults.AppendText("Searching for $($src.ProviderName) events in $($src.LogName)...`r`n")
+                        [System.Windows.Forms.Application]::DoEvents()
+                        
+                        try {
+                            # Use proper parameter names for Get-WinEvent
+                            $filterHashtable = @{
+                                LogName = $src.LogName
+                                ProviderName = $src.ProviderName
+                                StartTime = $since
+                            }
+                            
+                            $events = Get-WinEvent -FilterHashtable $filterHashtable -MaxEvents 15 -ErrorAction Stop
+                            
+                            if ($events -and $events.Count -gt 0) {
+                                $foundEvents = $true
+                                $diagResults.AppendText("Found $($events.Count) client VPN events from $($src.ProviderName)`r`n")
+                                
+                                foreach ($evt in $events) {
+                                    $diagResults.AppendText("[$($evt.TimeCreated)] [ID: $($evt.Id)] [Level: $($evt.LevelDisplayName)]`r`n")
+                                    # Truncate message if too long to prevent UI slowdown
+                                    $message = if ($evt.Message.Length -gt 500) { $evt.Message.Substring(0, 500) + "..." } else { $evt.Message }
+                                    $diagResults.AppendText("$message`r`n")
+                                    $diagResults.AppendText("-----------------------------------------`r`n")
+                                }
+                            } else {
+                                $diagResults.AppendText("No client VPN events found`r`n")
+                            }
+                        } catch {
+                            $diagResults.AppendText("Error: $($_.Exception.Message)`r`n")
+                        }
+                        
+                        $diagResults.AppendText("`r`n")
+                        $diagResults.ScrollToCaret()
+                        [System.Windows.Forms.Application]::DoEvents()
+                        Update-Status "Searched $($src.LogName) for $($src.ProviderName) events"
+                    }
+                    
+                    # Check for common VPN client error Event IDs
+                    $diagResults.AppendText("Searching for common VPN client error Event IDs...`r`n")
+                    [System.Windows.Forms.Application]::DoEvents()
+                    
+                    # Client-specific VPN error IDs
+                    $vpnClientErrorIDs = @(809, 789, 800, 801, 812, 13801, 13802, 13803, 13804, 13805, 13806, 13807, 13808, 13809, 13810, 13811, 13812, 13813, 13814, 13815, 13816, 13817, 13818, 13819, 13820, 13821, 13822, 13823, 13824, 13825, 13826, 13827, 13828, 13829, 13830, 13831, 13832, 13833, 13834, 13835, 13836, 13837, 13838, 13839, 13840, 13841, 13842, 13843, 13844, 13845, 13846, 13847, 13848, 13849, 13850, 13851, 13852, 13853, 13854, 13855, 13856, 13857, 13858, 13859, 13860, 13861, 13862, 13863, 13864, 13865, 13866, 13867, 13868, 13869, 13870, 13871, 13872, 13873, 13874, 13875, 13876, 13877, 13878, 13879, 13880, 13881, 13882, 13883, 13884, 13885, 13886, 13887, 13888, 13889, 13890, 13891, 13892, 13893, 13894, 13895, 13896, 13897, 13898, 13899, 13900, 13901, 13902, 13903, 13904, 13905, 13906, 13907, 13908, 13909, 13910, 13911, 13912, 13913, 13914, 13915, 13916, 13917, 13918, 13919, 13920, 13921, 13922, 13923, 13924, 13925, 13926, 13927, 13928, 13929, 13930, 13931, 13932, 13933, 13934, 13935, 13936, 13937, 13938, 13939, 13940, 13941, 13942, 13943, 13944, 13945, 13946, 13947, 13948, 13949, 13950, 13951, 13952, 13953, 13954, 13955, 13956, 13957, 13958, 13959, 13960, 13961, 13962, 13963, 13964, 13965, 13966, 13967, 13968, 13969, 13970, 13971, 13972, 13973, 13974, 13975, 13976, 13977, 13978, 13979, 13980, 13981, 13982, 13983, 13984, 13985, 13986, 13987, 13988, 13989, 13990, 13991, 13992, 13993, 13994, 13995, 13996, 13997, 13998, 13999, 14000)
+                    
+                    try {
+                        # Create a filter for specific client error IDs in the last 3 days
+                        $idFilter = @{
+                            LogName = "System"
+                            StartTime = $since
+                        }
+                        
+                        # Due to the large number of IDs, we'll search for any System events and filter by ID
+                        $systemEvents = Get-WinEvent -FilterHashtable $idFilter -MaxEvents 100 -ErrorAction Stop
+                        $clientErrorEvents = $systemEvents | Where-Object { $vpnClientErrorIDs -contains $_.Id }
+                        
+                        if ($clientErrorEvents -and $clientErrorEvents.Count -gt 0) {
+                            $foundEvents = $true
+                            $diagResults.AppendText("Found $($clientErrorEvents.Count) VPN client error events`r`n")
+                            
+                            foreach ($evt in $clientErrorEvents) {
+                                $diagResults.AppendText("[$($evt.TimeCreated)] [ID: $($evt.Id)] [Provider: $($evt.ProviderName)]`r`n")
+                                # Truncate message if too long
+                                $message = if ($evt.Message.Length -gt 500) { $evt.Message.Substring(0, 500) + "..." } else { $evt.Message }
+                                $diagResults.AppendText("$message`r`n")
+                                $diagResults.AppendText("-----------------------------------------`r`n")
+                            }
+                        } else {
+                            $diagResults.AppendText("No VPN client error events found`r`n")
+                        }
+                    } catch {
+                        $diagResults.AppendText("Error searching for VPN client error events: $($_.Exception.Message)`r`n")
+                    }
+                    
+                    # Check for VPN client connection attempts in the Application log
+                    $diagResults.AppendText("`r`nSearching for VPN client connection attempts...`r`n")
+                    [System.Windows.Forms.Application]::DoEvents()
+                    
+                    try {
+                        $appFilter = @{
+                            LogName = "Application"
+                            StartTime = $since
+                        }
+                        
+                        $appEvents = Get-WinEvent -FilterHashtable $appFilter -MaxEvents 100 -ErrorAction Stop | 
+                                    Where-Object { ($_.Message -like "*VPN*" -or $_.Message -like "*connection*") -and 
+                                                ($_.Message -like "*dial*" -or $_.Message -like "*connect*" -or 
+                                                    $_.Message -like "*authentication*" -or $_.Message -like "*tunnel*") }
+                        
+                        if ($appEvents -and $appEvents.Count -gt 0) {
+                            $foundEvents = $true
+                            $diagResults.AppendText("Found $($appEvents.Count) VPN client connection events`r`n")
+                            
+                            foreach ($evt in $appEvents) {
+                                $diagResults.AppendText("[$($evt.TimeCreated)] [ID: $($evt.Id)] [Provider: $($evt.ProviderName)]`r`n")
+                                # Truncate message if too long
+                                $message = if ($evt.Message.Length -gt 500) { $evt.Message.Substring(0, 500) + "..." } else { $evt.Message }
+                                $diagResults.AppendText("$message`r`n")
+                                $diagResults.AppendText("-----------------------------------------`r`n")
+                            }
+                        } else {
+                            $diagResults.AppendText("No VPN client connection events found`r`n")
+                        }
+                    } catch {
+                        $diagResults.AppendText("Error searching Application log: $($_.Exception.Message)`r`n")
+                    }
+                    
+                    if (-not $foundEvents) {
+                        $diagResults.AppendText("`r`nNo VPN client connectivity events found in the last 3 days.`r`n")
+                        $diagResults.AppendText("This could mean either no VPN connection attempts were made or logging is disabled.`r`n")
+                    }
+                    
+                    $diagResults.ScrollToCaret()
+                    Update-Status "VPN client event log review completed."
                 }
             },
             @{
