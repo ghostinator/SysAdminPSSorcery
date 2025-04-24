@@ -12,6 +12,8 @@ This PowerShell script provides a Windows Presentation Foundation (WPF) graphica
 
 It simplifies viewing, adding, modifying, and removing permissions (like Viewer, Editor, Author) that a delegate user has on another user's main calendar.
 
+![alt text](<CleanShot 2025-04-24 at 14.35.54.png>)
+
 ## Features
 
 * **Connect to Exchange Online:** Securely connects using the modern ExchangeOnlineManagement module (v3+). Handles modern authentication, automatically attempting browser-based login if integrated Windows authentication (WAM) fails or causes issues.
