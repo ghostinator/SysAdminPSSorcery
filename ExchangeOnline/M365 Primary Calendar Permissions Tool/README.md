@@ -12,7 +12,7 @@ This PowerShell script provides a Windows Presentation Foundation (WPF) graphica
 
 It simplifies viewing, adding, modifying, and removing permissions (like Viewer, Editor, Author) that a delegate user has on another user's main calendar.
 
-![alt text](<CleanShot 2025-04-24 at 14.35.54.png>)
+
 
 ## Features
 
