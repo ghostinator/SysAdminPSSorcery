@@ -1,9 +1,13 @@
 # M365 Primary Calendar Permissions Manager GUI
 
 **Author:** Brandon Cook 
+
 **Copyright:** (c) 2025 Brandon Cook
+
 **GitHub:** https://github.com/ghostinator/SysAdminPSSorcery
+
 **Script Name:** `Manage-PrimaryCalendarPermissionsGui.ps1` 
+
 **Version:** 1.9
 
 ## Description
@@ -12,6 +16,7 @@ This PowerShell script provides a Windows Presentation Foundation (WPF) graphica
 
 It simplifies viewing, adding, modifying, and removing permissions (like Viewer, Editor, Author) that a delegate user has on another user's main calendar.
 
+![CleanShot 2025-04-24 at 14 35 54](https://github.com/user-attachments/assets/2c686991-5df4-44bd-bf29-9ac94b67e529)
 
 
 ## Features
