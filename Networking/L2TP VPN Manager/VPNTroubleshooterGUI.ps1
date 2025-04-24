@@ -719,7 +719,7 @@ function Show-VPNTroubleshooterGUI {
     $vpnManagerGroup.Location = New-Object System.Drawing.Point(10, 20)
     $vpnManagerGroup.Size = New-Object System.Drawing.Size(350, 200)
     $configTab.Controls.Add($vpnManagerGroup)
-
+        
     # VPN List
     $vpnListBox = New-Object System.Windows.Forms.ListBox
     $vpnListBox.Location = New-Object System.Drawing.Point(10, 20)
