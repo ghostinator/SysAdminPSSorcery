@@ -14,12 +14,12 @@ This script uses WPF to create a graphical interface allowing administrators to:
 - Connect to Exchange Online.
 - Check for and install the ExchangeOnlineManagement module if needed.
 - Browse or search for target mailboxes (resolving aliases).
-- List a user's calendar folders (only primary is actionable).
+- List a user's calendar folders, selecting the primary by default (only primary is actionable).
 - View, add, modify, and remove delegate permissions ONLY on the primary '\Calendar' folder.
 
 .NOTES
-Version:        1.9
-Author:         Brandon Cook
+Version:        1.9 (Finalized)
+Author:         Brandon Cook (Collaboration with AI Assistant Gemini)
 Copyright:      (c) 2025 Brandon Cook
 GitHub:         https://github.com/ghostinator/SysAdminPSSorcery
 Last Modified:  2025-04-24
@@ -73,7 +73,7 @@ try {
 [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="M365 Primary Calendar Permissions Tool (v1.9)" Height="600" Width="700" ResizeMode="CanMinimize">
+        Title="M365 Primary Calendar Permissions Tool (B. Cook - v1.9)" Height="600" Width="700" ResizeMode="CanMinimize">
     <Grid Margin="10">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/> <RowDefinition Height="Auto"/> <RowDefinition Height="Auto"/> <RowDefinition Height="Auto"/> <RowDefinition Height="Auto"/> <RowDefinition Height="Auto"/> <RowDefinition Height="Auto"/> <RowDefinition Height="*"/>    <RowDefinition Height="Auto"/> </Grid.RowDefinitions>
@@ -93,8 +93,7 @@ try {
         </Grid>
 
         <Label Grid.Row="2" Grid.Column="0" Content="Target Calendar Folder:" VerticalAlignment="Center" Margin="0,5,0,0"/>
-        <ListView x:Name="lstTargetCalendar" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" VerticalAlignment="Stretch" Margin="0,5,0,0" Height="120" IsEnabled="False" SelectionMode="Single">
-             <ListView.View>
+        <ListView x:Name="lstTargetCalendar" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" VerticalAlignment="Stretch" Margin="0,5,0,0" Height="120" IsEnabled="False" SelectionMode="Single"> <ListView.View>
                  <GridView>
                       <GridViewColumn Header="Calendar Name" DisplayMemberBinding="{Binding DisplayName}" Width="Auto"/>
                  </GridView>
@@ -261,7 +260,7 @@ function Show-MailboxBrowserDialog {
         # Show Dialog
         $browserWindow.Owner = $window; $dialogResult = $browserWindow.ShowDialog()
         if ($dialogResult -eq $true) { return $script:SelectedMailboxFromBrowser } else { return $null }
-    } catch { $errorMsg = "Error opening/initializing mailbox browser: $($_.Exception.Message)"; Write-OutputToGui $errorMsg -Type Error; [System.Windows.MessageBox]::Show($errorMsg, "Browser Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error); Return $null }
+    } catch { $errorMsg = "Error opening/initializing mailbox browser: $($_.Exception.Message)"; Write-OutputToGui $errorMsg -Type Error; [System.Windows.MessageBox]::Show($errorMsg, "Browser Window Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error); Return $null }
 }
 
 # Function to resolve mailbox identity (Direct or Alias)
@@ -299,36 +298,65 @@ function Set-GuiState ($Connected) {
 function Get-CalendarFoldersForUser ($UserIdentity) {
     Write-OutputToGui "Listing calendar folders for mailbox '$($script:CurrentUserPrimarySmtp)'..."
     $targetCalendarList = $lstTargetCalendar
-    if (-not $targetCalendarList) { Write-Warning "lstTargetCalendar control not found."; return }
+    if (-not $targetCalendarList) { Write-Warning "lstTargetCalendar control not found in Get-CalendarFoldersForUser"; return }
+
     # Use Dispatcher as this runs after GUI is potentially shown
-    $targetCalendarList.Dispatcher.Invoke([Action]{ $targetCalendarList.ItemsSource = $null; $targetCalendarList.IsEnabled = $false })
+    # Clear ItemsSource first outside the main data processing try/catch
     try {
+        $targetCalendarList.Dispatcher.Invoke([Action]{ $targetCalendarList.ItemsSource = $null; $targetCalendarList.IsEnabled = $false })
+    } catch {
+        Write-OutputToGui "Error clearing calendar list: $($_.Exception.Message)" -Type Warning
+    }
+
+    try {
+        # Get raw data from Exchange
         $foldersData = Get-MailboxFolderStatistics -Identity $UserIdentity -FolderScope Calendar -ErrorAction Stop |
                        Select-Object @{Name='DisplayName';Expression={$_.FolderPath.Replace('/', '\')}},
                                      FolderPath,
                                      @{Name='IsPrimary';Expression={($_.FolderPath -eq '/Calendar') -or ($_.FolderPath -like '*/Calendar')}}
 
-        $folders = @($foldersData) # Ensure array for single item fix
-        $folders = $folders | Sort-Object -Property @{Expression={$_.IsPrimary}; Descending=$true}, DisplayName # Sort Primary first
+        # Check if we got any data ($null or empty collection vs. single object or populated collection)
+        if ($foldersData) {
 
-        if ($folders.Count -gt 0) {
-            Write-OutputToGui "Found $($folders.Count) calendar folder(s)."
+            # Sort whatever $foldersData is (Sort-Object handles single items or arrays)
+            $sortedFoldersData = $foldersData | Sort-Object -Property @{Expression={$_.IsPrimary}; Descending=$true}, DisplayName
+
+            # Get the count (will be 1 if single object, or array count)
+            # Ensure $sortedFoldersData is an array for Count to work consistently if it was single object
+            $folderCount = (@($sortedFoldersData)).Count
+            Write-OutputToGui "Found $($folderCount) calendar folder(s)."
+
+            # Update ListView ItemsSource via Dispatcher
             $targetCalendarList.Dispatcher.Invoke([Action]{
-                $targetCalendarList.ItemsSource = $folders
+                # --- Force Array Creation INSIDE Invoke ---
+                # Wrap the sorted data in @() immediately before assigning to ItemsSource
+                # This ensures ItemsSource receives an IEnumerable even if $sortedFoldersData was a single object
+                $targetCalendarList.ItemsSource = @($sortedFoldersData)
                 $targetCalendarList.IsEnabled = $true
-                $targetCalendarList.SelectedIndex = 0 # Select first item (Primary)
+                # Select the first item (should be Primary after sorting)
+                if ($folderCount -gt 0) {
+                    $targetCalendarList.SelectedIndex = 0
+                }
             })
+
             # Enable action controls via Dispatcher
             $actionControls = @( $txtDelegateUser, $cmbPermissionLevel, $btnViewPermissions, $btnAddSetPermission, $btnRemovePermission )
             $actionControls | ForEach-Object { if ($_) { $_.Dispatcher.Invoke([Action]{ $_.IsEnabled = $true }) } }
+
         } else {
+            # Handle case where Get-MailboxFolderStatistics returned nothing
             Write-OutputToGui "No calendar folders found for '$($script:CurrentUserPrimarySmtp)'." -Type Warning
             [System.Windows.MessageBox]::Show("No calendar folders found for '$($script:CurrentUserPrimarySmtp)'.", "Not Found", "OK", "Information")
+            # Disable action controls directly
             $actionControls = @( $txtDelegateUser, $cmbPermissionLevel, $btnViewPermissions, $btnAddSetPermission, $btnRemovePermission )
             $actionControls | ForEach-Object { if($_) { $_.IsEnabled = $false } }
         }
-    } catch { Write-OutputToGui "Error listing calendar folders for '$($script:CurrentUserPrimarySmtp)': $($_.Exception.Message)" -Type Error; [System.Windows.MessageBox]::Show("Error listing calendars for '$($script:CurrentUserPrimarySmtp)': $($_.Exception.Message)", "Error", "OK", "Error") }
+    } catch {
+        Write-OutputToGui "Error listing calendar folders for '$($script:CurrentUserPrimarySmtp)': $($_.Exception.Message)" -Type Error
+        [System.Windows.MessageBox]::Show("Error listing calendars for '$($script:CurrentUserPrimarySmtp)': $($_.Exception.Message)", "Error", "OK", "Error")
+    }
 }
+
 #endregion
 
 #region Event Handlers
@@ -341,17 +369,22 @@ $btnConnect.Add_Click({
         Set-GuiState $false
         Write-OutputToGui "Disconnected from Exchange Online."
     } else {
+        # Connect logic
         Write-OutputToGui "Connecting to Exchange Online..."
         try {
             Import-Module ExchangeOnlineManagement -ErrorAction Stop
             Write-OutputToGui "Attempting Connect-ExchangeOnline (Disabling WAM)..."
-            # Use -DisableWAM to force browser sign-in if WAM causes issues
-            Connect-ExchangeOnline -DisableWAM -ShowProgress $false -ShowBanner:$false -ErrorAction Stop -Verbose
+            # Let cmdlet show progress, Use -DisableWAM to force browser sign-in
+            Connect-ExchangeOnline -DisableWAM -ErrorAction Stop -Verbose
+
             Write-OutputToGui "Connect-ExchangeOnline command finished. Checking status..."
             if ($?) {
                 Write-OutputToGui "Connection command successful (`$?` = True)."
                 Write-OutputToGui "Connection successful."
                 Set-GuiState $true
+                # Bring Window to Front
+                try { $window.Activate() | Out-Null; Write-Host "Activated GUI window." }
+                catch { Write-OutputToGui "Warning: Could not activate window. Error: $($_.Exception.Message)" -Type Warning }
             } else {
                 Write-OutputToGui "Connection command failed (`$?` = False)." -Type Warning
                 Write-OutputToGui "Check console for verbose messages/errors." -Type Warning
@@ -403,12 +436,21 @@ $btnBrowseMailboxes.Add_Click({
 # View Permissions Button
 $btnViewPermissions.Add_Click({
     $targetCalendarItem = $lstTargetCalendar.SelectedItem # Get from ListView
-    if (-not $targetCalendarItem) { [System.Windows.MessageBox]::Show("Please select the primary '\\Calendar' folder from the list.", "Selection Required", "OK", "Warning"); return }
-    if ([string]::IsNullOrWhiteSpace($script:CurrentUserPrimarySmtp)) { Write-OutputToGui "Error: Resolved user email context missing..." -Type Error; [System.Windows.MessageBox]::Show("Target user email context missing...", "Error", "OK", "Error"); return }
+    # Check if an item is selected
+    if (-not $targetCalendarItem) {
+        [System.Windows.MessageBox]::Show("Please select the primary '\\Calendar' folder from the list.", "Selection Required", "OK", "Warning")
+        return
+    }
+    # Check if the resolved user email context is available
+    if ([string]::IsNullOrWhiteSpace($script:CurrentUserPrimarySmtp)) {
+         Write-OutputToGui "Error: Resolved user email context is missing..." -Type Error; [System.Windows.MessageBox]::Show("Target user email context missing...", "Error", "OK", "Error"); return
+    }
 
+    # Get DisplayName and IsPrimary property
     ${calendarDisplayName} = $targetCalendarItem.DisplayName
     ${isPrimaryCalendar} = $targetCalendarItem.IsPrimary
 
+    # Check if the selected folder is the primary calendar
     if (-not $isPrimaryCalendar) {
          [System.Windows.MessageBox]::Show("Managing permissions on non-primary calendars ('${calendarDisplayName}') is not currently supported due to cmdlet limitations. Please select the primary '\\Calendar' folder.", "Unsupported Folder", "OK", "Information")
          Write-OutputToGui "Action skipped: Managing non-primary calendar '${calendarDisplayName}' is not supported." -Type Warning
@@ -419,13 +461,20 @@ $btnViewPermissions.Add_Click({
     $permissionIdentity = "$($script:CurrentUserPrimarySmtp):$($calendarDisplayName)"
     Write-OutputToGui "Getting permissions for primary calendar: ${calendarDisplayName} (Using ID: ${permissionIdentity})"
     try {
-        $permissions = Get-MailboxFolderPermission -Identity $permissionIdentity -ErrorAction Stop | Select-Object User, AccessRights, SharingPermissionFlags
+        # Use the simple ID for the primary calendar
+        $permissions = Get-MailboxFolderPermission -Identity $permissionIdentity -ErrorAction Stop |
+                       Select-Object User, AccessRights, SharingPermissionFlags
+
         if ($permissions) {
             Write-OutputToGui "Current Permissions for ${calendarDisplayName}:"
             $permissions | Format-Table -AutoSize | Out-String | ForEach-Object { Write-OutputToGui $_ }
-        } else { Write-OutputToGui "No explicit non-default permissions found for ${calendarDisplayName}." }
-    } catch { Write-OutputToGui "Error getting permissions for '${calendarDisplayName}' using ID ('${permissionIdentity}'): $($_.Exception.Message)" -Type Error }
-})
+        } else {
+            Write-OutputToGui "No explicit non-default permissions found for ${calendarDisplayName}."
+        }
+    } catch {
+        Write-OutputToGui "Error getting permissions for '${calendarDisplayName}' using ID ('${permissionIdentity}'): $($_.Exception.Message)" -Type Error
+    }
+}) # End View Permissions
 
 # Add/Set Permission Button
 $btnAddSetPermission.Add_Click({
@@ -480,7 +529,7 @@ $btnAddSetPermission.Add_Click({
             Write-OutputToGui "An unexpected error occurred during Set-MailboxFolderPermission: ${ErrorMessage}" -Type Error
         }
     }
-})
+}) # End Add/Set Permissions
 
 # Remove Permission Button
 $btnRemovePermission.Add_Click({
@@ -522,7 +571,7 @@ $btnRemovePermission.Add_Click({
              Write-OutputToGui "Error removing permission for '${delegateUser}' from '${calendarDisplayName}' (ID: ${permissionIdentity}): $($_.Exception.Message)" -Type Error
          }
     }
-})
+}) # End Remove Permissions
 
 # Close Button
 $btnClose.Add_Click({
@@ -548,7 +597,7 @@ $window.Add_Closing({
 # Set initial state to disconnected
 Set-GuiState $false
 # Module check runs before this, GUI only shown if module is ready
-Write-Host "Launching M365 Primary Calendar Permissions Manager (V4 / 1.8 Formatted)..."
+Write-Host "Launching M365 Primary Calendar Permissions Manager (V4 / 1.9 Formatted)..."
 # Show the main window modally
 $window.ShowDialog() | Out-Null
 Write-Host "GUI Closed."
