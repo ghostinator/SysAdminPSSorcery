@@ -1,88 +1,166 @@
 <#
 .SYNOPSIS
-Updates the Allow/Block lists (Senders/Domains) in a Microsoft 365 Anti-Spam policy using entries from text files.
+Updates Allow/Block lists across multiple Microsoft 365 security policies using four primary sender/domain text files.
 
 .DESCRIPTION
-This script connects to Exchange Online and modifies a specified inbound Anti-Spam policy (typically the 'Default' one).
-It reads lists of allowed email addresses, allowed domains, blocked email addresses, and blocked domains from separate text files.
-The script merges the entries from the files with the existing entries in the policy, ensuring duplicates are removed.
-It uses the Set-HostedContentFilterPolicy cmdlet, which replaces the existing lists with the new merged lists.
-Entries added via this method do not expire by default.
+This script connects to Exchange Online and modifies specified security policies using four input files:
+- Anti-Spam Inbound Policy (HostedContentFilterPolicy): Updates Allowed/Blocked Senders (Addresses/Domains).
+- Tenant Allow/Block List (TABL): Adds Allowed/Blocked Senders (combining addresses and domains from files).
+- Anti-Phishing Policy: Updates Trusted Senders (Addresses) and Trusted Domains.
+
+It reads lists of entries from the four specified text files (allowed/blocked addresses and allowed/blocked domains).
+For policies managed with 'Set-*' cmdlets (Anti-Spam, Anti-Phishing), it merges the entries from the files
+with existing entries, removing duplicates.
+For the TABL (managed with 'New-TenantAllowBlockListItems'), it attempts to add the combined entries from the files.
+Note that running the TABL update repeatedly with the same files may cause errors for duplicate entries.
+
+This script DOES NOT manage IP Allow/Block lists in the Connection Filter policy. Use other methods for that.
 
 Requires the ExchangeOnlineManagement PowerShell module and appropriate permissions
 (e.g., Security Administrator, Exchange Administrator).
 
-.PARAMETER PolicyName
-The name of the Hosted Content Filter Policy (Anti-Spam Inbound Policy) to modify.
-Defaults to 'Default'. Use Get-HostedContentFilterPolicy to find other policy names.
+.PARAMETER AntiSpamPolicyName
+The name of the Hosted Content Filter Policy (Anti-Spam Inbound Policy) to modify. Defaults to 'Default'.
+
+.PARAMETER AntiPhishPolicyName
+The name of the Anti-Phishing Policy to modify. *This parameter is required* if you provide files for allowed addresses or domains.
+Use Get-AntiPhishPolicy to find policy names.
 
 .PARAMETER AllowedAddressesFile
-The full path to the text file containing allowed email addresses (one per line).
-Defaults to '.\allowed_addresses.txt' in the script's directory.
+Path to the text file containing allowed email addresses (one per line). Applied to Anti-Spam, TABL, Anti-Phishing.
+Defaults to 'C:\Temp\allowed_addresses.txt'.
 
 .PARAMETER AllowedDomainsFile
-The full path to the text file containing allowed domains (one per line).
-Defaults to '.\allowed_domains.txt' in the script's directory.
+Path to the text file containing allowed domains (one per line). Applied to Anti-Spam, TABL, Anti-Phishing.
+Defaults to 'C:\Temp\allowed_domains.txt'.
 
 .PARAMETER BlockedAddressesFile
-The full path to the text file containing blocked email addresses (one per line).
-Defaults to '.\blocked_addresses.txt' in the script's directory.
+Path to the text file containing blocked email addresses (one per line). Applied to Anti-Spam, TABL.
+Defaults to 'C:\Temp\blocked_addresses.txt'.
 
 .PARAMETER BlockedDomainsFile
-The full path to the text file containing blocked domains (one per line).
-Defaults to '.\blocked_domains.txt' in the script's directory.
+Path to the text file containing blocked domains (one per line). Applied to Anti-Spam, TABL.
+Defaults to 'C:\Temp\blocked_domains.txt'.
+
+.PARAMETER TablExpirationDays
+The number of days after which TABL ALLOW entries should expire. If not specified, and -TablNoExpiration is not used, defaults to 30 days internally. Cannot be used with -TablNoExpiration.
+Blocks added to TABL via this script default to No Expiration unless this parameter is used.
+
+.PARAMETER TablNoExpiration
+Switch parameter. If specified, TABL ALLOW entries will be set to never expire. Cannot be used with -TablExpirationDays.
+
+.PARAMETER TablNotes
+Optional notes to add to the TABL entries being created. Defaults to 'Bulk update via PowerShell script'.
 
 .PARAMETER DisconnectWhenDone
 Switch parameter. If specified, the script will disconnect the Exchange Online session upon completion.
 
 .EXAMPLE
-.\Update-M365AntiSpamListsFromFile.ps1
+.\Update-M365PolicyListsFromFile_Consolidated.ps1 -AllowedAddressesFile "C:\Data\AllowEmails.txt" -AllowedDomainsFile "C:\Data\AllowDomains.txt" -BlockedAddressesFile "C:\Data\BlockEmails.txt" -BlockedDomainsFile "C:\Data\BlockDomains.txt" -AntiPhishPolicyName "Office 365 AntiPhish Default" -TablNoExpiration
 
-Description: Runs the script using the default policy name ('Default') and default file names
-('allowed_addresses.txt', 'allowed_domains.txt', etc.) expected in the same directory as the script.
-
-.EXAMPLE
-.\Update-M365AntiSpamListsFromFile.ps1 -PolicyName "Contoso Strict Policy" -AllowedAddressesFile "C:\Temp\Contoso_Allow_Emails.txt" -AllowedDomainsFile "C:\Temp\Contoso_Allow_Domains.txt" -BlockedAddressesFile "C:\Temp\Contoso_Block_Emails.txt" -BlockedDomainsFile "C:\Temp\Contoso_Block_Domains.txt"
-
-Description: Runs the script targeting a custom policy named "Contoso Strict Policy" and uses specific file paths for the input lists.
+Description: Updates Anti-Spam, TABL, and Anti-Phishing policies using the four specified files from C:\Data. Sets TABL allows to not expire.
 
 .EXAMPLE
-.\Update-M365AntiSpamListsFromFile.ps1 -BlockedDomainsFile "C:\Path\OnlyUpdateBlocks.txt" -DisconnectWhenDone
+.\Update-M365PolicyListsFromFile_Consolidated.ps1
 
-Description: Runs the script updating only the blocked domains list (assuming other files don't exist or are empty)
-for the 'Default' policy and disconnects the session afterwards.
+Description: Attempts to run using default file names from C:\Temp for the default Anti-Spam policy.
+TABL Allows will default to 30-day expiration. Will likely skip Anti-Phishing updates unless files exist
+and -AntiPhishPolicyName is provided.
 
 .NOTES
 Author: Gemini
-Version: 1.0
+Version: 3.7 (Handle Policy Object Types in Merge Function)
 Date: 2025-05-01
 - Ensure the input text files contain one entry per line.
-- The script replaces the entire list in the policy with the merged list. If a file is empty or missing,
-  and the corresponding policy list currently has entries, those entries will be REMOVED (the list will be cleared).
+- For Anti-Spam and Anti-Phishing policies, the script merges file entries with existing policy entries.
+  If a file is empty/missing, and the corresponding policy list has entries, the list will be CLEARED.
+- For TABL entries, the script uses New-TenantAllowBlockListItems. Running this multiple times with the same file
+  may result in errors for entries that already exist.
+- This script does NOT manage Connection Filter (IP Allow/Block) lists.
 - Requires PowerShell 5.1 or later.
-- Run this script in a standard PowerShell console, not PowerShell ISE, for best results with interactive login.
+- Run this script in a standard PowerShell console.
 #>
 param(
+    # Policy Names
     [Parameter(Mandatory=$false)]
-    [string]$PolicyName = "Default",
+    [string]$AntiSpamPolicyName = "Default",
+
+    [Parameter(Mandatory=$false)] # Mandatory only if updating AntiPhish lists
+    [string]$AntiPhishPolicyName,
+
+    # Consolidated Input Files (Defaults updated)
+    [Parameter(Mandatory=$false)]
+    [string]$AllowedAddressesFile = "C:\Temp\allowed_addresses.txt",
 
     [Parameter(Mandatory=$false)]
-    [string]$AllowedAddressesFile = ".\allowed_addresses.txt",
+    [string]$AllowedDomainsFile = "C:\Temp\allowed_domains.txt",
 
     [Parameter(Mandatory=$false)]
-    [string]$AllowedDomainsFile = ".\allowed_domains.txt",
+    [string]$BlockedAddressesFile = "C:\Temp\blocked_addresses.txt",
 
     [Parameter(Mandatory=$false)]
-    [string]$BlockedAddressesFile = ".\blocked_addresses.txt",
+    [string]$BlockedDomainsFile = "C:\Temp\blocked_domains.txt",
+
+    # TABL Options (No Parameter Sets defined here)
+    [Parameter(Mandatory=$false)]
+    [ValidateRange(1, 90)] # Max expiration for most TABL allows is 90 days
+    [int]$TablExpirationDays,
 
     [Parameter(Mandatory=$false)]
-    [string]$BlockedDomainsFile = ".\blocked_domains.txt",
+    [switch]$TablNoExpiration,
 
+    [Parameter(Mandatory=$false)]
+    [string]$TablNotes = "Bulk update via PowerShell script",
+
+    # General Options
     [Parameter(Mandatory=$false)]
     [switch]$DisconnectWhenDone
 )
 
+# --- Validation ---
+# Manually check if both expiration parameters were used
+if ($PSBoundParameters.ContainsKey('TablExpirationDays') -and $PSBoundParameters.ContainsKey('TablNoExpiration')) {
+    Write-Error "Parameters -TablExpirationDays and -TablNoExpiration cannot be used together. Please choose one."
+    exit 1
+}
+
+
+# --- Function to Read Entries from a File ---
+function Get-EntriesFromFile {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$FilePath,
+        [Parameter(Mandatory=$true)]
+        [string]$ListDescription
+    )
+    if (-not (Test-Path -Path $FilePath -PathType Leaf)) {
+        Write-Warning "File not found at '$FilePath'. Skipping $ListDescription."
+        return $null # Return null if file doesn't exist
+    }
+    try {
+        $Entries = Get-Content -Path $FilePath -ErrorAction Stop
+        if (-not $Entries) {
+            Write-Host "$ListDescription file ('$FilePath') is empty."
+            return @() # Return empty array if file is empty
+        } else {
+            if ($Entries -isnot [array]) { $Entries = @($Entries) }
+            # Trim whitespace and convert to lowercase for consistency (especially domains/emails)
+            $CleanedEntries = $Entries | ForEach-Object { $_.Trim().ToLowerInvariant() } | Where-Object { $_.Length -gt 0 }
+            # Get unique entries from the file itself first
+            $UniqueEntries = $CleanedEntries | Sort-Object -Unique
+            Write-Host "Read $($UniqueEntries.Count) unique entries for $ListDescription from '$FilePath'."
+            return $UniqueEntries
+        }
+    } catch {
+        Write-Error "Error reading file '$FilePath' for $ListDescription."
+        Write-Error "Error Details: $($_.Exception.Message)"
+        throw "Failed to read $ListDescription file." # Stop script if file read fails
+    }
+}
+
 # --- Prerequisites ---
+Write-Host "Starting Script: Update M365 Policy Lists (Consolidated Inputs)" -ForegroundColor Cyan
+#region Prerequisites and Connection
 
 # Define the required module name
 $moduleName = "ExchangeOnlineManagement"
@@ -91,172 +169,343 @@ $moduleName = "ExchangeOnlineManagement"
 if (-not (Get-Module -Name $moduleName -ListAvailable)) {
     Write-Host "Module '$moduleName' not found. Attempting to install..." -ForegroundColor Yellow
     try {
-        # Use -Scope CurrentUser if admin rights are not available for AllUsers installation
         Install-Module -Name $moduleName -Force -Scope CurrentUser -ErrorAction Stop
         Write-Host "Module '$moduleName' installed successfully." -ForegroundColor Green
     } catch {
         Write-Error "Failed to install module '$moduleName'. Please install it manually using 'Install-Module -Name $moduleName -Scope CurrentUser' and try again."
-        exit 1 # Exit with an error code
+        exit 1
     }
 }
 
 # Import the module into the current session
 Write-Host "Importing module '$moduleName'..."
 try {
-    Import-Module -Name $moduleName -Force -ErrorAction Stop
+    # Removed -ErrorAction Stop as requested by user
+    Import-Module -Name $moduleName -Force
 } catch {
     Write-Error "Failed to import module '$moduleName'. Error: $($_.Exception.Message)"
+    # Exit if import fails critically, even without ErrorAction Stop
     exit 1
 }
-
-# --- Connection ---
 
 # Check if already connected, if not, connect interactively
 if (-not (Get-ConnectionInformation -ErrorAction SilentlyContinue)) {
     Write-Host "Connecting to Exchange Online. Please sign in with administrator credentials."
     try {
-        # Connect using the interactive method (recommended outside of ISE)
-        # Add -UserPrincipalName youradmin@domain.com if needed, but interactive usually prompts
-        Connect-ExchangeOnline -ShowBanner:$false -WarningAction SilentlyContinue -ErrorAction Stop
+        # Removed -ErrorAction Stop as requested by user
+        Connect-ExchangeOnline -ShowBanner:$false -WarningAction SilentlyContinue
         Write-Host "Successfully connected to Exchange Online." -ForegroundColor Green
     } catch {
         Write-Error "Failed to connect to Exchange Online. Error: $($_.Exception.Message)"
         Write-Error "Please ensure you have the correct permissions and try again."
-        exit 1 # Exit the script if connection fails
+        exit 1
     }
 } else {
     Write-Host "Already connected to Exchange Online." -ForegroundColor Cyan
 }
+#endregion Prerequisites and Connection
 
+# --- Read All Input Files ---
+# Note: Get-EntriesFromFile now returns unique, trimmed, lowercase entries
+Write-Host "`n--- Reading Input Files ---" -ForegroundColor Cyan
+$AllowedAddresses = Get-EntriesFromFile -FilePath $AllowedAddressesFile -ListDescription "Allowed Addresses"
+$AllowedDomains = Get-EntriesFromFile -FilePath $AllowedDomainsFile -ListDescription "Allowed Domains"
+$BlockedAddresses = Get-EntriesFromFile -FilePath $BlockedAddressesFile -ListDescription "Blocked Addresses"
+$BlockedDomains = Get-EntriesFromFile -FilePath $BlockedDomainsFile -ListDescription "Blocked Domains"
 
-# --- Initialize Parameter Hashtable for Set Cmdlet ---
-$SetParams = @{ Identity = $PolicyName }
-$PolicyUpdated = $false # Flag to track if any changes are made
-
-# --- Function to Read File and Merge List ---
+# --- Helper Function for Merging (Used for Set-* Cmdlets) ---
+#region Helper Function: Get-MergedList
 function Get-MergedList {
     param(
         [Parameter(Mandatory=$true)]
-        [string]$FilePath,
+        [array]$NewEntries, # Unique entries read from file
         [Parameter(Mandatory=$false)]
-        [array]$CurrentList,
+        [array]$CurrentListRaw, # Current list from policy (might contain objects)
         [Parameter(Mandatory=$true)]
         [string]$ListDescription
+        # Case sensitivity handled by ToLowerInvariant in Get-EntriesFromFile
     )
 
-    # Ensure CurrentList is a usable array, default to empty if $null
-    if ($CurrentList -eq $null) {
-        $CurrentList = @()
-        Write-Verbose "Current $ListDescription list from policy was null/empty."
+    # Ensure CurrentList is a usable array of STRINGS and also lowercase/trimmed
+    $CurrentListNormalized = @() # Initialize empty array for normalized strings
+    if ($CurrentListRaw -ne $null) {
+         # *** FIX START: Convert policy objects to strings before processing ***
+         $CurrentListNormalized = $CurrentListRaw | ForEach-Object { ($_.ToString()).Trim().ToLowerInvariant() } | Where-Object { $_.Length -gt 0 } | Sort-Object -Unique
+         # *** FIX END ***
     }
 
-    try {
-        Write-Verbose "Attempting to read $ListDescription from: $FilePath"
-        # Check if file exists before trying to read
-        if (-not (Test-Path -Path $FilePath -PathType Leaf)) {
-             Write-Warning "File not found at '$FilePath'. Skipping $ListDescription."
-             # If file not found, check if list needs clearing
-             if ($CurrentList.Count -gt 0) {
-                  Write-Host "$ListDescription list needs to be cleared (file not found)." -ForegroundColor Yellow
-                  return @() # Return empty array signal to clear
-             } else {
-                  return $null # Indicate no update needed
-             }
+    Write-Host "Current $ListDescription list in policy has $($CurrentListNormalized.Count) unique, normalized entries."
+
+    # Combine the already unique new entries (from file) with the unique, normalized current list (from policy)
+    $CombinedList = ($CurrentListNormalized + $NewEntries) | Sort-Object -Unique
+    # The result of Sort-Object -Unique is already an array, ensure no empty strings remain just in case
+    $CombinedList = $CombinedList | Where-Object { $_.Length -gt 0 }
+
+
+    Write-Host "Combined unique $ListDescription list has $($CombinedList.Count) entries."
+
+    # Create temporary lists for comparison to accurately detect changes
+    $TempCurrent = $CurrentListNormalized | Sort-Object
+    $TempCombined = $CombinedList | Sort-Object
+
+    # Check if the list actually changed
+    # Compare normalized lists
+    if (($CombinedList.Count -ne $CurrentListNormalized.Count) -or (Compare-Object -ReferenceObject $TempCurrent -DifferenceObject $TempCombined -CaseSensitive:$false -SyncWindow 0)) {
+         Write-Host "$ListDescription list has changed." -ForegroundColor Green
+         # Return the final, unique, sorted list of strings
+         return $CombinedList
+    } else {
+         Write-Host "$ListDescription list has NOT changed."
+         return $null # Indicate no update needed
+    }
+}
+#endregion Helper Function: Get-MergedList
+
+
+# --- Policy Update Logic ---
+# *** Wrap main logic in a try block for the finally ***
+try {
+
+    #region Anti-Spam Policy (HostedContentFilterPolicy)
+    # Only proceed if relevant files were found/read
+    if ($AllowedAddresses -ne $null -or $AllowedDomains -ne $null -or $BlockedAddresses -ne $null -or $BlockedDomains -ne $null) {
+        Write-Host "`n--- Processing Anti-Spam Policy ($AntiSpamPolicyName) ---" -ForegroundColor Cyan
+        $AntiSpamPolicyUpdated = $false
+        $AntiSpamSetParams = @{ Identity = $AntiSpamPolicyName }
+        try {
+            $AntiSpamPolicy = Get-HostedContentFilterPolicy -Identity $AntiSpamPolicyName -ErrorAction Stop
+
+            # Process Allowed Senders (Addresses)
+            if ($AllowedAddresses -ne $null) {
+                # Pass the raw policy list to the merge function
+                $UpdatedASAllowedSenders = Get-MergedList -NewEntries $AllowedAddresses -CurrentListRaw $AntiSpamPolicy.AllowedSenders -ListDescription "Anti-Spam Allowed Senders (Addresses)"
+                if ($UpdatedASAllowedSenders -ne $null) { $AntiSpamSetParams.AllowedSenders = $UpdatedASAllowedSenders; $AntiSpamPolicyUpdated = $true }
+            } elseif ($AntiSpamPolicy.AllowedSenders -ne $null -and $AntiSpamPolicy.AllowedSenders.Count -gt 0) { # File missing/empty, clear if needed (check raw count)
+                 Write-Host "Anti-Spam Allowed Senders (Addresses) list needs to be cleared (file missing/empty)." -ForegroundColor Yellow
+                 $AntiSpamSetParams.AllowedSenders = @(); $AntiSpamPolicyUpdated = $true
+            }
+
+            # Process Allowed Sender Domains
+            if ($AllowedDomains -ne $null) {
+                $UpdatedASAllowedDomains = Get-MergedList -NewEntries $AllowedDomains -CurrentListRaw $AntiSpamPolicy.AllowedSenderDomains -ListDescription "Anti-Spam Allowed Sender Domains"
+                if ($UpdatedASAllowedDomains -ne $null) { $AntiSpamSetParams.AllowedSenderDomains = $UpdatedASAllowedDomains; $AntiSpamPolicyUpdated = $true }
+            } elseif ($AntiSpamPolicy.AllowedSenderDomains -ne $null -and $AntiSpamPolicy.AllowedSenderDomains.Count -gt 0) {
+                 Write-Host "Anti-Spam Allowed Sender Domains list needs to be cleared (file missing/empty)." -ForegroundColor Yellow
+                 $AntiSpamSetParams.AllowedSenderDomains = @(); $AntiSpamPolicyUpdated = $true
+            }
+
+            # Process Blocked Senders (Addresses)
+            if ($BlockedAddresses -ne $null) {
+                $UpdatedASBlockedSenders = Get-MergedList -NewEntries $BlockedAddresses -CurrentListRaw $AntiSpamPolicy.BlockedSenders -ListDescription "Anti-Spam Blocked Senders (Addresses)"
+                if ($UpdatedASBlockedSenders -ne $null) { $AntiSpamSetParams.BlockedSenders = $UpdatedASBlockedSenders; $AntiSpamPolicyUpdated = $true }
+            } elseif ($AntiSpamPolicy.BlockedSenders -ne $null -and $AntiSpamPolicy.BlockedSenders.Count -gt 0) {
+                 Write-Host "Anti-Spam Blocked Senders (Addresses) list needs to be cleared (file missing/empty)." -ForegroundColor Yellow
+                 $AntiSpamSetParams.BlockedSenders = @(); $AntiSpamPolicyUpdated = $true
+            }
+
+            # Process Blocked Sender Domains
+            if ($BlockedDomains -ne $null) {
+                $UpdatedASBlockedDomains = Get-MergedList -NewEntries $BlockedDomains -CurrentListRaw $AntiSpamPolicy.BlockedSenderDomains -ListDescription "Anti-Spam Blocked Sender Domains"
+                if ($UpdatedASBlockedDomains -ne $null) { $AntiSpamSetParams.BlockedSenderDomains = $UpdatedASBlockedDomains; $AntiSpamPolicyUpdated = $true }
+            } elseif ($AntiSpamPolicy.BlockedSenderDomains -ne $null -and $AntiSpamPolicy.BlockedSenderDomains.Count -gt 0) {
+                 Write-Host "Anti-Spam Blocked Sender Domains list needs to be cleared (file missing/empty)." -ForegroundColor Yellow
+                 $AntiSpamSetParams.BlockedSenderDomains = @(); $AntiSpamPolicyUpdated = $true
+            }
+
+            # Update the policy only if changes were needed
+            if ($AntiSpamPolicyUpdated) {
+                Write-Host "Updating Anti-Spam policy '$AntiSpamPolicyName'..." -ForegroundColor Yellow
+                Set-HostedContentFilterPolicy @AntiSpamSetParams -ErrorAction Stop
+                Write-Host "Successfully updated Anti-Spam policy '$AntiSpamPolicyName'." -ForegroundColor Green
+            } else {
+                Write-Host "No changes detected for Anti-Spam policy '$AntiSpamPolicyName'."
+            }
+        } catch {
+            Write-Error "Failed to get or update Anti-Spam policy '$AntiSpamPolicyName'."
+            Write-Error "Error Details: $($_.Exception.Message)"
+        }
+    } else {
+         Write-Host "`n--- Skipping Anti-Spam Policy ($AntiSpamPolicyName) --- (No relevant input files found/read)" -ForegroundColor Gray
+    }
+    #endregion Anti-Spam Policy (HostedContentFilterPolicy)
+
+
+    #region Tenant Allow/Block List (TABL)
+    # Combine addresses and domains for TABL
+    $TablAllowEntries = @()
+    if ($AllowedAddresses -ne $null) { $TablAllowEntries += $AllowedAddresses }
+    if ($AllowedDomains -ne $null) { $TablAllowEntries += $AllowedDomains }
+    $TablAllowEntries = $TablAllowEntries | Sort-Object -Unique # Ensure combined list is unique
+
+    $TablBlockEntries = @()
+    if ($BlockedAddresses -ne $null) { $TablBlockEntries += $BlockedAddresses }
+    if ($BlockedDomains -ne $null) { $TablBlockEntries += $BlockedDomains }
+    $TablBlockEntries = $TablBlockEntries | Sort-Object -Unique # Ensure combined list is unique
+
+    if ($TablAllowEntries.Count -gt 0 -or $TablBlockEntries.Count -gt 0) {
+        Write-Host "`n--- Processing Tenant Allow/Block List (TABL) ---" -ForegroundColor Cyan
+
+        # Determine Expiration Date or NoExpiration switch for Allows
+        $TablAllowExpirationParams = @{}
+        if ($TablNoExpiration.IsPresent) {
+            $TablAllowExpirationParams.NoExpiration = $true
+            Write-Host "TABL Allow entries will attempt creation with No Expiration."
+        } elseif ($PSBoundParameters.ContainsKey('TablExpirationDays')) {
+            $CalculatedExpirationDate = (Get-Date).AddDays($TablExpirationDays)
+            $TablAllowExpirationParams.ExpirationDate = $CalculatedExpirationDate
+            Write-Host "TABL Allow entries will attempt creation expiring on $($CalculatedExpirationDate) (UTC) (using provided days)."
+        } else {
+            $DefaultExpirationDays = 30
+            $CalculatedExpirationDate = (Get-Date).AddDays($DefaultExpirationDays)
+            $TablAllowExpirationParams.ExpirationDate = $CalculatedExpirationDate
+            Write-Host "TABL Allow entries will attempt creation expiring on $($CalculatedExpirationDate) (UTC) (using default $DefaultExpirationDays days)."
         }
 
-        $NewEntries = Get-Content -Path $FilePath -ErrorAction Stop
-        if (-not $NewEntries) { # Check if file is empty or Get-Content returned null/empty
-            Write-Host "$ListDescription file ('$FilePath') is empty. No new entries to add for this list."
-            # If file is empty, we might still need to clear the list if CurrentList has items
-            if ($CurrentList.Count -gt 0) {
-                 Write-Host "$ListDescription list needs to be cleared (file is empty)." -ForegroundColor Yellow
-                 return @() # Return empty array signal to clear
-            } else {
-                 return $null # Indicate no update needed
+        # Process TABL Allowed Senders
+        if ($TablAllowEntries.Count -gt 0) {
+            Write-Host "Processing TABL Allowed Senders (Combined Addresses/Domains)..."
+            try {
+                $TablAllowParams = @{
+                    ListType = "Sender"
+                    Entries  = $TablAllowEntries # Pass the already unique list
+                    Notes    = $TablNotes
+                    Allow    = $true
+                    ErrorAction = "SilentlyContinue"
+                    WarningAction = "Continue"
+                }
+                $TablAllowParams += $TablAllowExpirationParams
+
+                Write-Host "Attempting to add $($TablAllowEntries.Count) entries to TABL Allow List..." -ForegroundColor Yellow
+                $Result = New-TenantAllowBlockListItems @TablAllowParams
+                if ($Error.Count -gt 0) {
+                     Write-Warning "Some TABL allow entries may not have been added (e.g., duplicates exist). Check previous errors."
+                     $Error.Clear()
+                } else {
+                    Write-Host "Successfully submitted request to add allowed senders to TABL." -ForegroundColor Green
+                }
+            } catch {
+                Write-Error "Failed to process TABL Allowed Senders."
+                Write-Error "Error Details: $($_.Exception.Message)"
             }
         } else {
-             # Ensure $NewEntries is always an array, even if file has one line
-            if ($NewEntries -isnot [array]) { $NewEntries = @($NewEntries) }
-
-            Write-Host "Read $($NewEntries.Count) new entries for $ListDescription from '$FilePath'."
-            Write-Host "Current $ListDescription list in policy '$PolicyName' has $($CurrentList.Count) entries."
-            # Combine, sort, unique (case-insensitive by default)
-            $CombinedList = ($CurrentList + $NewEntries) | Sort-Object -Unique
-            Write-Host "Combined unique $ListDescription list has $($CombinedList.Count) entries."
-            # Check if the list actually changed
-            if (($CombinedList.Count -ne $CurrentList.Count) -or ($CombinedList | Compare-Object $CurrentList -CaseSensitive:$false)) {
-                 Write-Host "$ListDescription list has changed." -ForegroundColor Green
-                 return $CombinedList
-            } else {
-                 Write-Host "$ListDescription list has NOT changed."
-                 return $null # Indicate no update needed
-            }
+            Write-Host "No combined Allowed Addresses/Domains found to add to TABL."
         }
-    } catch {
-        Write-Error "Error processing file '$FilePath' for $ListDescription."
-        Write-Error "Error Details: $($_.Exception.Message)"
-        # Consider whether to stop the whole script or just skip this list
-        throw "Failed to process $ListDescription file."
-    }
-}
 
-# --- Main Logic ---
-try {
-    # Get the current policy settings
-    Write-Host "Fetching current policy '$PolicyName'..." -ForegroundColor Cyan
-    $Policy = Get-HostedContentFilterPolicy -Identity $PolicyName -ErrorAction Stop
+        # Process TABL Blocked Senders
+        if ($TablBlockEntries.Count -gt 0) {
+            Write-Host "Processing TABL Blocked Senders (Combined Addresses/Domains)..."
+            try {
+                 # Determine Expiration for Blocks
+                 $TablBlockExpirationParams = @{}
+                 if ($TablNoExpiration.IsPresent) {
+                     $TablBlockExpirationParams.NoExpiration = $true
+                 } elseif ($PSBoundParameters.ContainsKey('TablExpirationDays')) {
+                     $CalculatedExpirationDate = (Get-Date).AddDays($TablExpirationDays)
+                     $TablBlockExpirationParams.ExpirationDate = $CalculatedExpirationDate
+                     Write-Host "Applying specified expiration date to TABL Block entries as well." -ForegroundColor Yellow
+                 } else {
+                     $TablBlockExpirationParams.NoExpiration = $true # Default Block = No Expiration
+                 }
 
-    # Process Allowed Senders (Addresses)
-    $UpdatedAllowedSenders = Get-MergedList -FilePath $AllowedAddressesFile -CurrentList $Policy.AllowedSenders -ListDescription "Allowed Senders (Addresses)"
-    if ($UpdatedAllowedSenders -ne $null) {
-        $SetParams.AllowedSenders = $UpdatedAllowedSenders
-        $PolicyUpdated = $true
-    }
+                $TablBlockParams = @{
+                    ListType = "Sender"
+                    Entries  = $TablBlockEntries # Pass the already unique list
+                    Notes    = $TablNotes
+                    Block    = $true
+                    ErrorAction = "SilentlyContinue"
+                    WarningAction = "Continue"
+                }
+                $TablBlockParams += $TablBlockExpirationParams
 
-    # Process Allowed Sender Domains
-    $UpdatedAllowedDomains = Get-MergedList -FilePath $AllowedDomainsFile -CurrentList $Policy.AllowedSenderDomains -ListDescription "Allowed Sender Domains"
-    if ($UpdatedAllowedDomains -ne $null) {
-        $SetParams.AllowedSenderDomains = $UpdatedAllowedDomains
-        $PolicyUpdated = $true
-    }
-
-    # Process Blocked Senders (Addresses)
-    $UpdatedBlockedSenders = Get-MergedList -FilePath $BlockedAddressesFile -CurrentList $Policy.BlockedSenders -ListDescription "Blocked Senders (Addresses)"
-    if ($UpdatedBlockedSenders -ne $null) {
-        $SetParams.BlockedSenders = $UpdatedBlockedSenders
-        $PolicyUpdated = $true
-    }
-
-    # Process Blocked Sender Domains
-    $UpdatedBlockedDomains = Get-MergedList -FilePath $BlockedDomainsFile -CurrentList $Policy.BlockedSenderDomains -ListDescription "Blocked Sender Domains"
-    if ($UpdatedBlockedDomains -ne $null) {
-        $SetParams.BlockedSenderDomains = $UpdatedBlockedDomains
-        $PolicyUpdated = $true
-    }
-
-    # --- Update the policy only if changes were needed ---
-    if ($PolicyUpdated) {
-        Write-Host "Updating policy '$PolicyName' with new parameters..." -ForegroundColor Cyan
-        Write-Host "Parameters being set:"
-        $SetParams | Format-List | Out-String | Write-Host # Show what's being set clearly
-
-        Set-HostedContentFilterPolicy @SetParams -ErrorAction Stop
-        Write-Host "Successfully updated policy '$PolicyName'." -ForegroundColor Green
+                Write-Host "Attempting to add $($TablBlockEntries.Count) entries to TABL Block List..." -ForegroundColor Yellow
+                $Result = New-TenantAllowBlockListItems @TablBlockParams
+                if ($Error.Count -gt 0) {
+                     Write-Warning "Some TABL block entries may not have been added (e.g., duplicates exist). Check previous errors."
+                     $Error.Clear()
+                } else {
+                    Write-Host "Successfully submitted request to add blocked senders to TABL." -ForegroundColor Green
+                }
+            } catch {
+                Write-Error "Failed to process TABL Blocked Senders."
+                Write-Error "Error Details: $($_.Exception.Message)"
+            }
+        } else {
+            Write-Host "No combined Blocked Addresses/Domains found to add to TABL."
+        }
     } else {
-        Write-Host "No changes detected in any list compared to the files. Policy '$PolicyName' not updated." -ForegroundColor Yellow
+         Write-Host "`n--- Skipping Tenant Allow/Block List (TABL) --- (No relevant input files found/read)" -ForegroundColor Gray
     }
+    #endregion Tenant Allow/Block List (TABL)
 
-} catch {
-    Write-Error "Failed to get or update policy '$PolicyName'."
-    Write-Error "Error Details: $($_.Exception.Message)"
-    # Consider adding more specific error handling if needed
-} finally {
-    # --- Optional Disconnect ---
-    if ($DisconnectWhenDone) {
-        Write-Host "Disconnecting from Exchange Online as requested..." -ForegroundColor Cyan
-        Disconnect-ExchangeOnline -Confirm:$false
-        Write-Host "Disconnected."
+
+    #region Anti-Phishing Policy
+    # Only proceed if relevant files were found AND policy name was provided
+    if (($AllowedAddresses -ne $null -or $AllowedDomains -ne $null) -and (-not [string]::IsNullOrEmpty($AntiPhishPolicyName))) {
+        Write-Host "`n--- Processing Anti-Phishing Policy ($AntiPhishPolicyName) ---" -ForegroundColor Cyan
+        $AntiPhishPolicyUpdated = $false
+        $AntiPhishSetParams = @{ Identity = $AntiPhishPolicyName }
+        try {
+            # Get-AntiPhishPolicy is needed to get the lists
+            $AntiPhishPolicy = Get-AntiPhishPolicy -Identity $AntiPhishPolicyName -ErrorAction Stop
+
+            # Process Trusted Senders (Addresses)
+            if ($AllowedAddresses -ne $null) {
+                 # Pass the raw policy list to the merge function
+                 $UpdatedAPTrustedSenders = Get-MergedList -NewEntries $AllowedAddresses -CurrentListRaw $AntiPhishPolicy.TrustedSenders -ListDescription "Anti-Phishing Trusted Senders (Addresses)"
+                 if ($UpdatedAPTrustedSenders -ne $null) { $AntiPhishSetParams.TrustedSenders = $UpdatedAPTrustedSenders; $AntiPhishPolicyUpdated = $true }
+            } elseif ($AntiPhishPolicy.TrustedSenders -ne $null -and $AntiPhishPolicy.TrustedSenders.Count -gt 0) {
+                 Write-Host "Anti-Phishing Trusted Senders list needs to be cleared (file missing/empty)." -ForegroundColor Yellow
+                 $AntiPhishSetParams.TrustedSenders = @(); $AntiPhishPolicyUpdated = $true
+            }
+
+            # Process Trusted Domains
+            if ($AllowedDomains -ne $null) {
+                 # Pass the raw policy list to the merge function
+                 $UpdatedAPTrustedDomains = Get-MergedList -NewEntries $AllowedDomains -CurrentListRaw $AntiPhishPolicy.TrustedDomains -ListDescription "Anti-Phishing Trusted Domains"
+                 if ($UpdatedAPTrustedDomains -ne $null) { $AntiPhishSetParams.TrustedDomains = $UpdatedAPTrustedDomains; $AntiPhishPolicyUpdated = $true }
+            } elseif ($AntiPhishPolicy.TrustedDomains -ne $null -and $AntiPhishPolicy.TrustedDomains.Count -gt 0) {
+                 Write-Host "Anti-Phishing Trusted Domains list needs to be cleared (file missing/empty)." -ForegroundColor Yellow
+                 $AntiPhishSetParams.TrustedDomains = @(); $AntiPhishPolicyUpdated = $true
+            }
+
+            # Update the policy only if changes were needed
+            if ($AntiPhishPolicyUpdated) {
+                Write-Host "Updating Anti-Phishing policy '$AntiPhishPolicyName'..." -ForegroundColor Yellow
+                # Use Set-AntiPhishPolicy for these lists
+                Set-AntiPhishPolicy @AntiPhishSetParams -ErrorAction Stop
+                Write-Host "Successfully updated Anti-Phishing policy '$AntiPhishPolicyName'." -ForegroundColor Green
+            } else {
+                Write-Host "No changes detected for Anti-Phishing policy '$AntiPhishPolicyName'."
+            }
+
+        } catch {
+            Write-Error "Failed to get or update Anti-Phishing policy '$AntiPhishPolicyName'."
+            Write-Error "Error Details: $($_.Exception.Message)"
+        }
+    } elseif (($AllowedAddresses -ne $null -or $AllowedDomains -ne $null) -and ([string]::IsNullOrEmpty($AntiPhishPolicyName))) {
+         Write-Warning "`n--- Skipping Anti-Phishing Policy --- (Relevant input files found, but -AntiPhishPolicyName parameter was not provided)"
+    } else {
+         Write-Host "`n--- Skipping Anti-Phishing Policy --- (No relevant input files found/read)" -ForegroundColor Gray
     }
+    #endregion Anti-Phishing Policy
+
+# *** End of main try block ***
 }
+finally {
+    # --- Finalization ---
+    #region Disconnect
+    # Disconnect if requested
+    if ($DisconnectWhenDone.IsPresent) { # Check switch value correctly
+        Write-Host "`nDisconnecting from Exchange Online as requested..." -ForegroundColor Cyan
+        # Check connection state before disconnecting
+        if (Get-ConnectionInformation -ErrorAction SilentlyContinue) {
+            Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue
+            Write-Host "Disconnected."
+        } else {
+            Write-Host "Already disconnected or connection not found."
+        }
+    }
+    #endregion Disconnect
+} # *** End of finally block ***
 
-Write-Host "Script finished."
+Write-Host "`nScript finished." -ForegroundColor Cyan
