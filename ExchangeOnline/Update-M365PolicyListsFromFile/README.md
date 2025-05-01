@@ -1,4 +1,5 @@
 # Update Microsoft 365 Policy Lists from Files
+
 ## Overview
 
 This PowerShell script (`Update-M365PolicyListsFromFile.ps1`) helps administrators bulk-update sender and domain allow/block lists across multiple Microsoft 365 security policies using four primary input files.
