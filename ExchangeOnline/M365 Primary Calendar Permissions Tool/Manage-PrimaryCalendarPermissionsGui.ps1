@@ -374,20 +374,49 @@ $btnConnect.Add_Click({
         try {
             Import-Module ExchangeOnlineManagement -ErrorAction Stop
             Write-OutputToGui "Attempting Connect-ExchangeOnline (Disabling WAM)..."
-            # Let cmdlet show progress, Use -DisableWAM to force browser sign-in
-            Connect-ExchangeOnline -DisableWAM -ErrorAction Stop -Verbose
+            
+            # Create a script block for the connection attempt
+            $connectionScriptBlock = {
+                param($DisableWAM)
+                Connect-ExchangeOnline -DisableWAM:$DisableWAM -ErrorAction Stop
+            }
 
-            Write-OutputToGui "Connect-ExchangeOnline command finished. Checking status..."
-            if ($?) {
-                Write-OutputToGui "Connection command successful (`$?` = True)."
+            # Create a job to run the connection attempt
+            $job = Start-Job -ScriptBlock $connectionScriptBlock -ArgumentList $true
+
+            # Wait for the job with a timeout
+            $timeout = 120 # seconds
+            $completed = Wait-Job $job -Timeout $timeout
+
+            if ($completed -eq $null) {
+                Write-OutputToGui "Connection attempt timed out after $timeout seconds." -Type Error
+                Stop-Job $job
+                Remove-Job $job
+                if ($Global:IsConnected) { Set-GuiState $false }
+                return
+            }
+
+            # Get the job results
+            $result = Receive-Job $job -ErrorAction SilentlyContinue
+            $error = $job.ChildJobs[0].Error
+            Remove-Job $job
+
+            if ($error) {
+                Write-OutputToGui "Connection failed: $($error[0].Exception.Message)" -Type Error
+                if ($Global:IsConnected) { Set-GuiState $false }
+                return
+            }
+
+            # Test the connection by trying a simple command
+            try {
+                $null = Get-OrganizationConfig -ErrorAction Stop
                 Write-OutputToGui "Connection successful."
                 Set-GuiState $true
                 # Bring Window to Front
                 try { $window.Activate() | Out-Null; Write-Host "Activated GUI window." }
                 catch { Write-OutputToGui "Warning: Could not activate window. Error: $($_.Exception.Message)" -Type Warning }
-            } else {
-                Write-OutputToGui "Connection command failed (`$?` = False)." -Type Warning
-                Write-OutputToGui "Check console for verbose messages/errors." -Type Warning
+            } catch {
+                Write-OutputToGui "Connection test failed: $($_.Exception.Message)" -Type Error
                 if ($Global:IsConnected) { Set-GuiState $false }
             }
         } catch {

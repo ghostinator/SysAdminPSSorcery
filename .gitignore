@@ -1,3 +1,6 @@
 .DS_Store
 Azure/export items to file.ps1
 .gitignore
+ExchangeOnline/M365 Primary Calendar Permissions Tool/Manage-PrimaryCalendarPermissionsGui.ps1
+ExchangeOnline/Meeting Troubleshooter/M365-Meeting-Tools.ps1
+ExchangeOnline/M365 Primary Calendar Permissions Tool/Manage-PrimaryCalendarPermissionsGui.ps1
