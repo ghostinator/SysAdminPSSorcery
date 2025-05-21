@@ -1,6 +1,7 @@
 # Microsoft Teams Network Information Parser Tool
 
 **Version:** 1.0 (Based on script development ending May 21, 2025)
+
 **Purpose:** To assist network and Teams administrators in parsing and transforming network-related information, particularly from ITGlue exports, into a format suitable for uploading to the Microsoft Teams Call Quality Dashboard (CQD) as Building/Location data.
 ![CleanShot 2025-05-21 at 13 48 46](https://github.com/user-attachments/assets/cee56d36-1aa2-44a1-9a77-ffaab4bd1957)
 
