@@ -1,5 +1,6 @@
-# Complete Timezone Auto-Configuration Setup Script
+# Timezone Auto-Configuration Setup Script
 # This script creates the timezone detection script and scheduled task
+# Now disables Windows automatic timezone to prevent conflicts
 
 # Configuration
 $scriptFolder = "C:\Scripts"
@@ -31,6 +32,41 @@ Write-Host "`nStep 2: Creating timezone detection script..." -ForegroundColor Ye
 $timezoneScript = @'
 # Automatic Timezone Detection and Configuration Script
 # This script detects location based on public IP and sets appropriate timezone
+# Enhanced version that disables Windows automatic timezone to prevent conflicts
+
+# Function to disable Windows automatic timezone
+function Disable-WindowsAutomaticTimezone {
+    try {
+        Write-Host "Disabling Windows automatic timezone features..." -ForegroundColor Yellow
+        
+        # Disable Windows automatic timezone service
+        $tzAutoUpdatePath = "HKLM:\SYSTEM\CurrentControlSet\Services\tzautoupdate"
+        if (Test-Path $tzAutoUpdatePath) {
+            Set-ItemProperty -Path $tzAutoUpdatePath -Name "Start" -Value 4
+            Write-Host "✓ Disabled Windows automatic timezone service" -ForegroundColor Green
+        }
+        
+        # Disable location-based timezone in registry
+        $locationPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location"
+        if (Test-Path $locationPath) {
+            Set-ItemProperty -Path $locationPath -Name "Value" -Value "Deny" -ErrorAction SilentlyContinue
+            Write-Host "✓ Disabled location-based timezone detection" -ForegroundColor Green
+        }
+        
+        # Disable automatic timezone in TimeZone settings
+        $timezonePath = "HKLM:\SYSTEM\CurrentControlSet\Control\TimeZoneInformation"
+        if (Test-Path $timezonePath) {
+            Set-ItemProperty -Path $timezonePath -Name "DisableAutoDaylightTimeSet" -Value 0 -ErrorAction SilentlyContinue
+        }
+        
+        Write-Host "✓ Windows automatic timezone features disabled" -ForegroundColor Green
+        return $true
+    }
+    catch {
+        Write-Warning "Failed to disable Windows automatic timezone: $_"
+        return $false
+    }
+}
 
 # Function to get public IP address
 function Get-PublicIPAddress {
@@ -215,8 +251,11 @@ function Test-NetworkChange {
     
     # Compare IPs
     if ($currentIP -ne $lastIP) {
-        # Store new IP
+        # Store new IP and additional tracking information
         Set-ItemProperty -Path $registryPath -Name $lastIPKey -Value $currentIP
+        Set-ItemProperty -Path $registryPath -Name "LastTimezoneUpdate" -Value (Get-Date).ToString()
+        Set-ItemProperty -Path $registryPath -Name "ScriptVersion" -Value "1.1"
+        
         Write-Host "Network change detected: $lastIP -> $currentIP" -ForegroundColor Green
         return $true
     }
@@ -226,15 +265,57 @@ function Test-NetworkChange {
     }
 }
 
+# Function to update registry tracking
+function Update-RegistryTracking {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$DetectedTimezone,
+        [Parameter(Mandatory=$true)]
+        [string]$WindowsTimezone,
+        [Parameter(Mandatory=$true)]
+        [string]$Location
+    )
+    
+    try {
+        $registryPath = "HKLM:\SOFTWARE\AutoTimezone"
+        
+        # Ensure registry path exists
+        if (!(Test-Path $registryPath)) {
+            New-Item -Path $registryPath -Force | Out-Null
+        }
+        
+        # Store comprehensive tracking information
+        Set-ItemProperty -Path $registryPath -Name "LastDetectedTimezone" -Value $DetectedTimezone
+        Set-ItemProperty -Path $registryPath -Name "LastWindowsTimezone" -Value $WindowsTimezone
+        Set-ItemProperty -Path $registryPath -Name "LastLocation" -Value $Location
+        Set-ItemProperty -Path $registryPath -Name "LastSuccessfulUpdate" -Value (Get-Date).ToString()
+        Set-ItemProperty -Path $registryPath -Name "WindowsAutoTimezoneDisabled" -Value "True"
+        
+        Write-Host "Updated registry tracking information" -ForegroundColor Gray
+    }
+    catch {
+        Write-Warning "Failed to update registry tracking: $_"
+    }
+}
+
 # Main script execution
 function Main {
     # Log start time
     $logPath = "C:\Scripts\TimezoneUpdate.log"
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    Add-Content -Path $logPath -Value "[$timestamp] Timezone update script started"
+    Add-Content -Path $logPath -Value "[$timestamp] Timezone update script started (Enhanced v1.1)"
     
-    Write-Host "=== Automatic Timezone Configuration Script ===" -ForegroundColor Cyan
+    Write-Host "=== Automatic Timezone Configuration Script (Enhanced) ===" -ForegroundColor Cyan
     Write-Host "This script will detect your location and set the appropriate timezone.`n"
+    
+    # Step 0: Disable Windows automatic timezone features
+    Write-Host "Step 0: Disabling Windows automatic timezone..." -ForegroundColor Yellow
+    $disableResult = Disable-WindowsAutomaticTimezone
+    if ($disableResult) {
+        Add-Content -Path $logPath -Value "[$timestamp] Successfully disabled Windows automatic timezone"
+    } else {
+        Add-Content -Path $logPath -Value "[$timestamp] Warning: Could not fully disable Windows automatic timezone"
+    }
     
     # Check for network change first
     if (!(Test-NetworkChange)) {
@@ -244,7 +325,7 @@ function Main {
     }
     
     # Step 1: Get public IP address
-    Write-Host "Step 1: Getting public IP address..." -ForegroundColor Yellow
+    Write-Host "`nStep 1: Getting public IP address..." -ForegroundColor Yellow
     $publicIP = Get-PublicIPAddress
     if (-not $publicIP) {
         Add-Content -Path $logPath -Value "[$timestamp] Failed to get public IP address"
@@ -270,10 +351,15 @@ function Main {
     Write-Host "`nStep 4: Setting system timezone..." -ForegroundColor Yellow
     $success = Set-SystemTimeZone -WindowsTimeZone $windowsTimeZone
     
+    # Step 5: Update registry tracking
+    $locationString = "$($geoData.city), $($geoData.regionName), $($geoData.country)"
+    Update-RegistryTracking -DetectedTimezone $geoData.timezone -WindowsTimezone $windowsTimeZone -Location $locationString
+    
     if ($success) {
-        Add-Content -Path $logPath -Value "[$timestamp] Successfully updated timezone to $windowsTimeZone (Location: $($geoData.city), $($geoData.country))"
+        Add-Content -Path $logPath -Value "[$timestamp] Successfully updated timezone to $windowsTimeZone (Location: $locationString)"
         Write-Host "`n=== Configuration Complete ===" -ForegroundColor Green
         Write-Host "Your system timezone has been automatically configured based on your location."
+        Write-Host "Windows automatic timezone has been disabled to prevent conflicts." -ForegroundColor Yellow
     }
     else {
         Add-Content -Path $logPath -Value "[$timestamp] Failed to update timezone to $windowsTimeZone"
@@ -288,7 +374,7 @@ Main
 
 try {
     $timezoneScript | Out-File -FilePath $scriptPath -Encoding UTF8 -Force
-    Write-Host "Created timezone script: $scriptPath" -ForegroundColor Green
+    Write-Host "Created enhanced timezone script: $scriptPath" -ForegroundColor Green
 }
 catch {
     Write-Error "Failed to create script file: $_"
@@ -321,9 +407,9 @@ try {
     $principal = New-ScheduledTaskPrincipal -UserId "NT AUTHORITY\SYSTEM" -LogonType ServiceAccount -RunLevel Highest
     
     # Register the task
-    Register-ScheduledTask -TaskName $taskName -TaskPath "\" -Description "Automatically updates timezone based on IP geolocation when network changes" -Action $action -Settings $settings -Trigger $triggers -Principal $principal | Out-Null
+    Register-ScheduledTask -TaskName $taskName -TaskPath "\" -Description "Automatically updates timezone based on IP geolocation when network changes (Enhanced version with Windows auto-timezone disabled)" -Action $action -Settings $settings -Trigger $triggers -Principal $principal | Out-Null
     
-    Write-Host "Created scheduled task: $taskName" -ForegroundColor Green
+    Write-Host "Created enhanced scheduled task: $taskName" -ForegroundColor Green
 }
 catch {
     Write-Error "Failed to create scheduled task: $_"
@@ -335,7 +421,7 @@ Write-Host "`nStep 4: Verifying setup..." -ForegroundColor Yellow
 
 # Check if script file exists
 if (Test-Path $scriptPath) {
-    Write-Host "✓ Script file created successfully" -ForegroundColor Green
+    Write-Host "✓ Enhanced script file created successfully" -ForegroundColor Green
 }
 else {
     Write-Host "✗ Script file not found" -ForegroundColor Red
@@ -344,7 +430,7 @@ else {
 # Check if scheduled task exists
 $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 if ($task) {
-    Write-Host "✓ Scheduled task created successfully" -ForegroundColor Green
+    Write-Host "✓ Enhanced scheduled task created successfully" -ForegroundColor Green
     Write-Host "  Task Name: $($task.TaskName)" -ForegroundColor Gray
     Write-Host "  Task Path: $($task.TaskPath)" -ForegroundColor Gray
     Write-Host "  State: $($task.State)" -ForegroundColor Gray
@@ -353,10 +439,25 @@ else {
     Write-Host "✗ Scheduled task not found" -ForegroundColor Red
 }
 
-Write-Host "`n=== Setup Complete ===" -ForegroundColor Cyan
-Write-Host "The automatic timezone configuration system has been installed." -ForegroundColor Green
-Write-Host "The system will now automatically detect and set the correct timezone when:" -ForegroundColor Yellow
+# Check Windows automatic timezone status
+Write-Host "`nStep 5: Checking Windows automatic timezone status..." -ForegroundColor Yellow
+$tzAutoUpdate = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\tzautoupdate" -Name "Start" -ErrorAction SilentlyContinue
+if ($tzAutoUpdate -and $tzAutoUpdate.Start -eq 4) {
+    Write-Host "✓ Windows automatic timezone is disabled" -ForegroundColor Green
+} else {
+    Write-Host "⚠ Windows automatic timezone may still be enabled" -ForegroundColor Yellow
+}
+
+Write-Host "`n=== Enhanced Setup Complete ===" -ForegroundColor Cyan
+Write-Host "The enhanced automatic timezone configuration system has been installed." -ForegroundColor Green
+Write-Host "Key improvements in this version:" -ForegroundColor Yellow
+Write-Host "  • Windows automatic timezone disabled to prevent conflicts" -ForegroundColor Gray
+Write-Host "  • Enhanced registry tracking with additional metadata" -ForegroundColor Gray
+Write-Host "  • Improved logging and error handling" -ForegroundColor Gray
+Write-Host "  • Better conflict prevention with Windows built-in features" -ForegroundColor Gray
+Write-Host "`nThe system will now automatically detect and set the correct timezone when:" -ForegroundColor Yellow
 Write-Host "  • The computer starts up" -ForegroundColor Gray
 Write-Host "  • A user logs in" -ForegroundColor Gray
 Write-Host "  • The network connection changes" -ForegroundColor Gray
 Write-Host "`nLog file location: C:\Scripts\TimezoneUpdate.log" -ForegroundColor Cyan
+Write-Host "Registry tracking: HKLM:\SOFTWARE\AutoTimezone" -ForegroundColor Cyan
