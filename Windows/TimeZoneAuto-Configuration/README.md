@@ -43,14 +43,14 @@ Run this single command as Administrator to set up everything:
 
 ```powershell
 # Download and run the complete setup script
-Invoke-Expression (Invoke-WebRequest -Uri "https://raw.githubusercontent.com/yourusername/auto-timezone/main/Setup-AutoTimezone.ps1" -UseBasicParsing).Content
+Invoke-Expression (Invoke-WebRequest -Uri "https://raw.githubusercontent.com/ghostinator/SysAdminPSSorcery/refs/heads/main/Windows/TimeZoneAuto-Configuration/TimezoneAuto-Configuration.ps1" -UseBasicParsing).Content
 ```
 
 ### Option 2: Manual Installation
 
 1. **Download the setup script**:
    ```powershell
-   Invoke-WebRequest -Uri "https://raw.githubusercontent.com/yourusername/auto-timezone/main/Setup-AutoTimezone.ps1" -OutFile "Setup-AutoTimezone.ps1"
+   Invoke-WebRequest -Uri "https://raw.githubusercontent.com/ghostinator/SysAdminPSSorcery/refs/heads/main/Windows/TimeZoneAuto-Configuration/TimezoneAuto-Configuration.ps1"
    ```
 
 2. **Run as Administrator**:
