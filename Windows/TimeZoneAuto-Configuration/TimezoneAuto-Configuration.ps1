@@ -21,19 +21,20 @@ Write-Host "  - Log for detection script: $logFileForInnerScript"
 Write-Host "  - Registry tracking: $registryKeyForInnerScript"
 
 # Step 1: Create the Scripts folder if it doesn't exist
-Write-Host "`nStep 1: Ensuring script directory exists..." -ForegroundColor Yellow
+Write-Host "nStep 1: Ensuring script directory exists..." -ForegroundColor Yellow
 if (!(Test-Path $scriptFolder)) {
     try {
         New-Item -Path $scriptFolder -ItemType Directory -Force -ErrorAction Stop | Out-Null
         Write-Host "  Created directory: $scriptFolder" -ForegroundColor Green
     }
     catch {
-        Write-Error "  Failed to create directory $scriptFolder: $($_.Exception.Message)"
+        # This is the line we are focusing on (around line 31 of the setup script)
+        Write-Error "Failed to create directory $scriptFolder : $($_.Exception.Message)"
         exit 1
     }
 }
 else {
-    Write-Host "  Directory already exists: $scriptFolder" -ForegroundColor Green
+    Write-Host "Directory already exists: $scriptFolder" -ForegroundColor Green
 }
 
 # Step 2: Create the timezone detection script (UpdateTimezone.ps1)
