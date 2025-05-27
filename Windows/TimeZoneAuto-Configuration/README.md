@@ -110,22 +110,21 @@ The `UpdateTimezone.ps1` script contains an extensible mapping table. Key entrie
 
 ```mermaid
 graph TD
-    A[Scheduled Task Triggered <br/>(Startup/Logon/Network Event)] --> B(Initialize & Start Logging <br/>to C:\Scripts\TimezoneUpdate.log);
-    B --> C{Disable Windows <br/>Auto Timezone Features};
-    C --> D[Get Public IP Address <br/>(Multiple Services)];
-    D -- IP Lookup Fails --> E[Set Target: Eastern Standard Time <br/>Log Failure];
-    D -- IP Lookup Succeeds --> F[Get Geolocation Data <br/>(ip-api.com)];
-    F -- Geo Lookup Fails <br/>OR No IANA TZ --> E;
-    F -- Geo Lookup Succeeds --> G[Extract IANA Timezone];
-    G --> H{Convert IANA to Windows TZ <br/>(Using Internal Map)};
-    H -- Mapping Fails --> E;
-    H -- Mapping Succeeds --> I[Set Target: Mapped Windows TZ <br/>Log Success];
-    E --> J(Set System Timezone <br/>to Target);
+    A["Scheduled Task Triggered <br/>(Startup/Logon/Network Event)"] --> B["Initialize & Start Logging <br/>(to C:\Scripts\TimezoneUpdate.log)"];
+    B --> C{"Attempt to Disable Windows <br/>Auto Timezone Features"};
+    C --> D["Get Public IP Address <br/>(Multiple Services)"];
+    D --"IP Lookup Fails"--> E["Set Target Timezone: <br/>'Eastern Standard Time' <br/>(Log Failure)"];
+    D --"IP Lookup Succeeds"--> F["Get Geolocation Data <br/>(from ip-api.com)"];
+    F --"Geo Lookup Fails <br/>OR No IANA TZ Returned"--> E;
+    F --"Geo Lookup Succeeds"--> G["Extract IANA Timezone String"];
+    G --> H{"Convert IANA to Windows TZ <br/>(Using Internal Mapping Table)"};
+    H --"Mapping Fails <br/>(No Explicit or Approx. Match)"--> E;
+    H --"Mapping Succeeds"--> I["Set Target Timezone: <br/>Mapped Windows TZ <br/>(Log Success)"];
+    E --> J["Attempt to Set System Timezone <br/>to Determined Target"];
     I --> J;
-    J --> K[Update Registry Tracking <br/>(HKLM:\SOFTWARE\AutoTimezone)];
-    K --> L[Stop Logging & Exit];
+    J --> K["Update Registry Tracking Data <br/>(HKLM:\SOFTWARE\AutoTimezone)"];
+    K --> L["Stop Logging & Script Exit"];
 ```
-
 ## 🔧 Configuration & Customization (`C:\Scripts\UpdateTimezone.ps1`)
 
 * **IP Detection Services:** Modify the `$uris` array in the `Get-PublicIPAddress` function within `C:\Scripts\UpdateTimezone.ps1` to change or add new public IP lookup endpoints.
@@ -136,27 +135,75 @@ graph TD
 
 ## 📝 Logging Details
 
-All significant operations, decisions, and errors of the `UpdateTimezone.ps1` script are logged with timestamps to `C:\Scripts\TimezoneUpdate.log`. This provides a comprehensive audit trail for troubleshooting.
+All operations of `UpdateTimezone.ps1` are logged with timestamps to `C:\Scripts\TimezoneUpdate.log`. This provides a comprehensive audit trail for troubleshooting.
 
-Example log entries:
-2025-05-27 10:05:39] (1.3-ET-Fallback) Script execution started.
+**Example Log Entries:**
+
+Here's a snippet of what you might find in `C:\Scripts\TimezoneUpdate.log`:
+
+```log
+**********************
+PowerShell transcript start
+Start time: 20250527111500
+Username: NT AUTHORITY\SYSTEM
+RunAs User: NT AUTHORITY\SYSTEM
+Configuration Name:
+Machine: VISTA-LT42 (Microsoft Windows NT 10.0.22631.0)
+Host Application: C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File C:\Scripts\UpdateTimezone.ps1
+Process ID: 5678
+PSVersion: 5.1.22621.2506
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.22621.2506
+BuildVersion: 10.0.22621.2506
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+Transcript started, output file is C:\Scripts\TimezoneUpdate.log
+[2025-05-27 11:15:01] (1.3-ET-Fallback) Script execution started.
+
+=== Automatic Timezone Configuration Script (1.3-ET-Fallback) ===
+
+Step 0: Controlling Windows automatic timezone features...
 Attempting to disable/control Windows automatic timezone features...
-✓ Windows Time Zone Auto Update service (tzautoupdate) set to Disabled.
-...
-Attempting to get public IP from https://api.ipify.org/...
-Public IP Address: 72.2.154.154 (from https://api.ipify.org/)
-Querying geolocation API: http://ip-api.com/json/72.2.154.154
-Location Details (from ip-api.com):
-City: Elkhart, Region: Indiana, Country: United States
-IANA Timezone: America/Indiana/Indianapolis
-Successfully retrieved geolocation: IP: 72.2.154.154, City: Elkhart, Region: Indiana, Country: United States, IANA TZ: America/Indiana/Indianapolis
-Found explicit mapping for IANA 'America/Indiana/Indianapolis': 'US Eastern Standard Time'
+  ✓ Windows Time Zone Auto Update service (tzautoupdate) set to Disabled.
+  ✓ Attempted to disable OS location-based timezone setting via policy keys
+  ✓ Set CapabilityAccessManager\ConsentStore\location to Deny.
+  ✓ DynamicDaylightTimeDisabled is already 0 (DST enabled per zone rules).
+  Finished attempt to disable/control Windows automatic timezone features.
 
-Attempting to set system timezone to 'US Eastern Standard Time'...
-Successfully set timezone to 'US Eastern Standard Time'
-Current local time: 05/27/2025 10:05:45 AM
-Updated registry tracking information.
-[2025-05-27 10:05:45] (1.3-ET-Fallback) Script execution finished. Status: Successfully set timezone to 'US Eastern Standard Time'. (IP: 72.2.154.154, City: Elkhart, Region: Indiana, Country: United States, IANA TZ: America/Indiana/Indianapolis)
+Step 2: Getting public IP address...
+Attempting to get public IP from [https://api.ipify.org/](https://api.ipify.org/)...
+  Public IP Address: 104.18.23.123 (from [https://api.ipify.org/](https://api.ipify.org/))
+  Network change detected (IP: <Previous_IP_or_blank> -> 104.18.23.123). Proceeding with timezone update.
+
+Step 3: Getting geolocation data for IP: 104.18.23.123...
+Querying geolocation API: [http://ip-api.com/json/104.18.23.123](http://ip-api.com/json/104.18.23.123)
+  Location Details (from ip-api.com):
+    City: Los Angeles, Region: California, Country: United States
+    IANA Timezone: America/Los_Angeles
+  Successfully retrieved geolocation: IP: 104.18.23.123, City: Los Angeles, Region: California, Country: United States, IANA TZ: America/Los_Angeles
+
+Step 4: Converting IANA timezone 'America/Los_Angeles' to Windows timezone...
+  Found explicit mapping for IANA 'America/Los_Angeles': 'Pacific Standard Time'
+
+Step 5: Setting system timezone to 'Pacific Standard Time'...
+  Attempting to set timezone from 'US Eastern Standard Time' to 'Pacific Standard Time'...
+  Successfully set timezone to 'Pacific Standard Time'
+  Current local time: 05/27/2025 08:15:10 AM 
+  Updated registry tracking information.
+
+Step 6: Updating registry tracking...
+  Updated registry tracking information.
+
+=== Timezone Configuration Attempt Complete (1.3-ET-Fallback) ===
+[2025-05-27 11:15:12] (1.3-ET-Fallback) Script execution finished. Status: Successfully set timezone to 'Pacific Standard Time'. (IP: 104.18.23.123, City: Los Angeles, Region: California, Country: United States, IANA TZ: America/Los_Angeles)
+**********************
+PowerShell transcript end
+End time: 20250527111512
+**********************
+```
 
 ## 🛠️ Troubleshooting and Verification
 
