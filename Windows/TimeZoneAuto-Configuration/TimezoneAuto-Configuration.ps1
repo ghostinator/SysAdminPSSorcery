@@ -1,463 +1,563 @@
-# Timezone Auto-Configuration Setup Script
-# This script creates the timezone detection script and scheduled task
-# Now disables Windows automatic timezone to prevent conflicts
+# Timezone Auto-Configuration Setup Script (v1.3 - ET Fallback, Task Overwrite & Immediate Run)
+# This script creates the timezone detection script and scheduled task.
+# It ensures Windows automatic timezone features are disabled to prevent conflicts.
+# It defaults to Eastern Time if geolocation fails or IANA mapping is unsuccessful.
+# It deletes any existing scheduled task with the same name before creation.
+# It runs the newly created scheduled task immediately after setup.
 
 # Configuration
 $scriptFolder = "C:\Scripts"
-$scriptPath = "$scriptFolder\UpdateTimezone.ps1"
+$scriptPath = Join-Path -Path $scriptFolder -ChildPath "UpdateTimezone.ps1"
 $taskName = "AutoTimezoneUpdate"
+$logFileForInnerScript = Join-Path -Path $scriptFolder -ChildPath "TimezoneUpdate.log"
+$registryKeyForInnerScript = "HKLM:\SOFTWARE\AutoTimezone"
 
-Write-Host "=== Timezone Auto-Configuration Setup ===" -ForegroundColor Cyan
+Write-Host "=== Timezone Auto-Configuration Setup (v1.3) ===" -ForegroundColor Cyan
 Write-Host "Setting up automatic timezone detection and configuration..." -ForegroundColor Yellow
+Write-Host "  - Script will be placed in: $scriptFolder"
+Write-Host "  - Scheduled Task Name: $taskName"
+Write-Host "  - Default Timezone on failure: Eastern Standard Time"
+Write-Host "  - Log for detection script: $logFileForInnerScript"
+Write-Host "  - Registry tracking: $registryKeyForInnerScript"
 
 # Step 1: Create the Scripts folder if it doesn't exist
-Write-Host "`nStep 1: Creating script directory..." -ForegroundColor Yellow
+Write-Host "`nStep 1: Ensuring script directory exists..." -ForegroundColor Yellow
 if (!(Test-Path $scriptFolder)) {
     try {
-        New-Item -Path $scriptFolder -ItemType Directory -Force | Out-Null
-        Write-Host "Created directory: $scriptFolder" -ForegroundColor Green
+        New-Item -Path $scriptFolder -ItemType Directory -Force -ErrorAction Stop | Out-Null
+        Write-Host "  Created directory: $scriptFolder" -ForegroundColor Green
     }
     catch {
-        Write-Error "Failed to create directory $scriptFolder : $_"
+        Write-Error "  Failed to create directory $scriptFolder: $($_.Exception.Message)"
         exit 1
     }
 }
 else {
-    Write-Host "Directory already exists: $scriptFolder" -ForegroundColor Green
+    Write-Host "  Directory already exists: $scriptFolder" -ForegroundColor Green
 }
 
-# Step 2: Create the timezone detection script
-Write-Host "`nStep 2: Creating timezone detection script..." -ForegroundColor Yellow
+# Step 2: Create the timezone detection script (UpdateTimezone.ps1)
+Write-Host "`nStep 2: Creating timezone detection script ($($scriptPath))..." -ForegroundColor Yellow
 
-$timezoneScript = @'
-# Automatic Timezone Detection and Configuration Script
-# This script detects location based on public IP and sets appropriate timezone
-# Enhanced version that disables Windows automatic timezone to prevent conflicts
+$timezoneScriptContent = @'
+# Automatic Timezone Detection and Configuration Script (v1.3 - ET Fallback Enhanced)
+# This script detects location based on public IP and sets appropriate timezone.
+# Disables Windows automatic timezone features to prevent conflicts.
+# Defaults to Eastern Time if geolocation fails or IANA mapping is unsuccessful.
 
-# Function to disable Windows automatic timezone
-function Disable-WindowsAutomaticTimezone {
-    try {
-        Write-Host "Disabling Windows automatic timezone features..." -ForegroundColor Yellow
-        
-        # Disable Windows automatic timezone service
-        $tzAutoUpdatePath = "HKLM:\SYSTEM\CurrentControlSet\Services\tzautoupdate"
-        if (Test-Path $tzAutoUpdatePath) {
-            Set-ItemProperty -Path $tzAutoUpdatePath -Name "Start" -Value 4
-            Write-Host "✓ Disabled Windows automatic timezone service" -ForegroundColor Green
-        }
-        
-        # Disable location-based timezone in registry
-        $locationPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location"
-        if (Test-Path $locationPath) {
-            Set-ItemProperty -Path $locationPath -Name "Value" -Value "Deny" -ErrorAction SilentlyContinue
-            Write-Host "✓ Disabled location-based timezone detection" -ForegroundColor Green
-        }
-        
-        # Disable automatic timezone in TimeZone settings
-        $timezonePath = "HKLM:\SYSTEM\CurrentControlSet\Control\TimeZoneInformation"
-        if (Test-Path $timezonePath) {
-            Set-ItemProperty -Path $timezonePath -Name "DisableAutoDaylightTimeSet" -Value 0 -ErrorAction SilentlyContinue
-        }
-        
-        Write-Host "✓ Windows automatic timezone features disabled" -ForegroundColor Green
-        return $true
-    }
-    catch {
-        Write-Warning "Failed to disable Windows automatic timezone: $_"
-        return $false
-    }
-}
+# Configuration for this script
+$ScriptVersion = "1.3-ET-Fallback"
+$LogFile = "{0}" # Placeholder for $logFileForInnerScript
+$RegistryPath = "{1}" # Placeholder for $registryKeyForInnerScript
+
+# Function to robustly disable Windows automatic timezone features
+function Disable-WindowsAutomaticTimezone {{
+    Write-Host "Attempting to disable/control Windows automatic timezone features..."
+    $ErrorActionPreference = 'SilentlyContinue' # Suppress errors for individual operations but log overall
+
+    # Disable Time Zone Auto Update service
+    try {{
+        Set-Service -Name tzautoupdate -StartupType Disabled -ErrorAction Stop
+        Stop-Service -Name tzautoupdate -Force -ErrorAction SilentlyContinue # Stop if running
+        Write-Host "  ✓ Windows Time Zone Auto Update service (tzautoupdate) set to Disabled." -ForegroundColor Green
+    }}
+    catch {{
+        Write-Warning "  ⚠ Could not set tzautoupdate service startup type or stop it: $($_.Exception.Message)"
+    }}
+
+    # Disable "Set time zone automatically" via known registry setting (Windows 10/11 UI)
+    # This is a user-specific setting, but we try to set a system-wide default policy if possible
+    # For SYSTEM context, this specific key might not be the primary control but worth attempting.
+    $timeSettingsPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\DateTime\Servers"
+    if (Test-Path $timeSettingsPath) {{
+        try {{
+            Set-ItemProperty -Path $timeSettingsPath -Name "Enabled" -Value 0 -Type DWord -Force -ErrorAction Stop
+            Write-Host "  ✓ Set HKLM DateTime\Servers 'Enabled' to 0 (attempt to influence default)." -ForegroundColor Green
+        }}
+        catch {{
+            Write-Warning "  ⚠ Could not set HKLM DateTime\Servers 'Enabled': $($_.Exception.Message)"
+        }}
+    }}
+
+    # Deny location access for general location capability (less direct for system timezone but part of hardening)
+    $locationCapabilityPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location"
+    if (Test-Path $locationCapabilityPath) {{
+        try {{
+            Set-ItemProperty -Path $locationCapabilityPath -Name "Value" -Value "Deny" -ErrorAction Stop
+            Write-Host "  ✓ Set CapabilityAccessManager\ConsentStore\location to Deny." -ForegroundColor Green
+        }}
+        catch {{
+            Write-Warning "  ⚠ Could not set CapabilityAccessManager\ConsentStore\location Value: $($_.Exception.Message)"
+        }}
+    }}
+
+    # Ensure DynamicDaylightTimeDisabled is NOT set to 1 (which would disable DST)
+    # We want DST to work according to the chosen timezone's rules.
+    $tzInfoPath = "HKLM:\SYSTEM\CurrentControlSet\Control\TimeZoneInformation"
+    try {{
+        $currentDynamicDst = Get-ItemProperty -Path $tzInfoPath -Name "DynamicDaylightTimeDisabled" -ErrorAction SilentlyContinue
+        if ($currentDynamicDst -and $currentDynamicDst.DynamicDaylightTimeDisabled -ne 0) {{
+            Set-ItemProperty -Path $tzInfoPath -Name "DynamicDaylightTimeDisabled" -Value 0 -Type DWord -Force -ErrorAction Stop
+            Write-Host "  ✓ Ensured DynamicDaylightTimeDisabled is 0 (DST enabled per zone rules)." -ForegroundColor Green
+        }} elseif (-not $currentDynamicDst) {{
+            Set-ItemProperty -Path $tzInfoPath -Name "DynamicDaylightTimeDisabled" -Value 0 -Type DWord -Force -ErrorAction Stop # Create if not exists
+            Write-Host "  ✓ Set DynamicDaylightTimeDisabled to 0 (DST enabled per zone rules)." -ForegroundColor Green
+        }} else {{
+            Write-Host "  ✓ DynamicDaylightTimeDisabled is already 0 (DST enabled per zone rules)." -ForegroundColor Green
+        }}
+    }}
+    catch {{
+        Write-Warning "  ⚠ Could not configure DynamicDaylightTimeDisabled: $($_.Exception.Message)"
+    }}
+
+    $ErrorActionPreference = 'Continue' # Restore default
+    Write-Host "  Finished attempt to disable/control Windows automatic timezone features."
+}}
 
 # Function to get public IP address
-function Get-PublicIPAddress {
-    try {
-        $publicIP = (Invoke-WebRequest -Uri "https://api.ipify.org/" -UseBasicParsing -TimeoutSec 10).Content.Trim()
-        Write-Host "Public IP Address: $publicIP" -ForegroundColor Green
-        return $publicIP
-    }
-    catch {
-        Write-Error "Failed to retrieve public IP address: $_"
-        return $null
-    }
-}
+function Get-PublicIPAddress {{
+    $uris = @(
+        "https://api.ipify.org/",
+        "https://ipinfo.io/ip",
+        "https://icanhazip.com/",
+        "https://checkip.amazonaws.com/"
+    )
+    foreach ($uri in $uris) {{
+        try {{
+            Write-Host "Attempting to get public IP from $uri..."
+            $response = Invoke-WebRequest -Uri $uri -UseBasicParsing -TimeoutSec 7 -ErrorAction Stop
+            $publicIP = $response.Content.Trim()
+            if ($publicIP -match '^\d{{1,3}}\.\d{{1,3}}\.\d{{1,3}}\.\d{{1,3}}$') {{
+                Write-Host "  Public IP Address: $publicIP (from $uri)" -ForegroundColor Green
+                return $publicIP
+            }}
+            else {{
+                Write-Warning "  Invalid IP format from $uri: '$publicIP'"
+            }}
+        }}
+        catch {{
+            Write-Warning "  Failed to retrieve public IP address from $uri: $($_.Exception.Message)"
+        }}
+    }}
+    Write-Error "Failed to retrieve public IP address from all configured sources."
+    return $null
+}}
 
 # Function to get geolocation data including timezone
-function Get-GeoLocationData {
+function Get-GeoLocationData {{
     param (
         [Parameter(Mandatory=$true)]
         [string]$IPAddress
     )
-    
-    try {
-        $geoData = Invoke-RestMethod -Uri "http://ip-api.com/json/$IPAddress" -Method Get -TimeoutSec 10
+    try {{
+        $apiUrl = "http://ip-api.com/json/$IPAddress"
+        Write-Host "Querying geolocation API: $apiUrl"
+        $geoData = Invoke-RestMethod -Uri $apiUrl -Method Get -TimeoutSec 10 -ErrorAction Stop
         
-        if ($geoData.status -eq "success") {
-            Write-Host "Location Details:" -ForegroundColor Yellow
-            Write-Host "  City: $($geoData.city)"
-            Write-Host "  Region: $($geoData.regionName)"
-            Write-Host "  Country: $($geoData.country)"
-            Write-Host "  ISP: $($geoData.isp)"
-            Write-Host "  Timezone: $($geoData.timezone)"
-            
+        if ($geoData.status -eq "success") {{
+            Write-Host "  Location Details (from ip-api.com):" -ForegroundColor Yellow
+            Write-Host "    City: $($geoData.city), Region: $($geoData.regionName), Country: $($geoData.country)"
+            Write-Host "    IANA Timezone: $($geoData.timezone)" -ForegroundColor Green
             return $geoData
-        }
-        else {
-            Write-Error "Geolocation lookup failed: $($geoData.message)"
+        }}
+        else {{
+            Write-Error "  Geolocation lookup failed (ip-api.com status: $($geoData.status), message: $($geoData.message))"
             return $null
-        }
-    }
-    catch {
-        Write-Error "Failed to get geolocation data: $_"
+        }}
+    }}
+    catch {{
+        Write-Error "  Exception during geolocation data retrieval: $($_.Exception.Message)"
         return $null
-    }
-}
+    }}
+}}
 
 # Function to convert IANA timezone to Windows timezone
-function Convert-IANAToWindowsTimeZone {
+function Convert-IANAToWindowsTimeZone {{
     param (
         [Parameter(Mandatory=$true)]
         [string]$IANATimeZone
     )
     
-    # Comprehensive mapping of IANA to Windows timezones
-    $timezoneMapping = @{
-        "America/New_York" = "Eastern Standard Time"
-        "America/Chicago" = "Central Standard Time"
-        "America/Denver" = "Mountain Standard Time"
-        "America/Phoenix" = "US Mountain Standard Time"
-        "America/Los_Angeles" = "Pacific Standard Time"
-        "America/Anchorage" = "Alaskan Standard Time"
-        "Pacific/Honolulu" = "Hawaiian Standard Time"
-        "Europe/London" = "GMT Standard Time"
-        "Europe/Paris" = "W. Europe Standard Time"
-        "Europe/Berlin" = "W. Europe Standard Time"
-        "Europe/Rome" = "W. Europe Standard Time"
-        "Europe/Madrid" = "Romance Standard Time"
-        "Europe/Amsterdam" = "W. Europe Standard Time"
-        "Europe/Brussels" = "Romance Standard Time"
-        "Europe/Vienna" = "W. Europe Standard Time"
-        "Europe/Prague" = "Central Europe Standard Time"
-        "Europe/Warsaw" = "Central European Standard Time"
-        "Europe/Budapest" = "Central Europe Standard Time"
-        "Europe/Stockholm" = "W. Europe Standard Time"
-        "Europe/Oslo" = "W. Europe Standard Time"
-        "Europe/Copenhagen" = "Romance Standard Time"
-        "Europe/Helsinki" = "FLE Standard Time"
-        "Europe/Moscow" = "Russian Standard Time"
-        "Asia/Tokyo" = "Tokyo Standard Time"
-        "Asia/Shanghai" = "China Standard Time"
-        "Asia/Hong_Kong" = "China Standard Time"
-        "Asia/Singapore" = "Singapore Standard Time"
-        "Asia/Seoul" = "Korea Standard Time"
-        "Asia/Kolkata" = "India Standard Time"
-        "Asia/Dubai" = "Arabian Standard Time"
-        "Asia/Tehran" = "Iran Standard Time"
-        "Australia/Sydney" = "AUS Eastern Standard Time"
-        "Australia/Melbourne" = "AUS Eastern Standard Time"
-        "Australia/Brisbane" = "E. Australia Standard Time"
-        "Australia/Perth" = "W. Australia Standard Time"
-        "Australia/Adelaide" = "Cen. Australia Standard Time"
-        "Pacific/Auckland" = "New Zealand Standard Time"
-        "America/Toronto" = "Eastern Standard Time"
-        "America/Vancouver" = "Pacific Standard Time"
-        "America/Sao_Paulo" = "E. South America Standard Time"
-        "America/Mexico_City" = "Central Standard Time (Mexico)"
-        "Africa/Cairo" = "Egypt Standard Time"
-        "Africa/Johannesburg" = "South Africa Standard Time"
-    }
+    $timezoneMapping = @{{
+        # North America
+        "America/New_York" = "Eastern Standard Time"; "America/Detroit" = "Eastern Standard Time";
+        "America/Kentucky/Louisville" = "Eastern Standard Time"; "America/Kentucky/Monticello" = "Eastern Standard Time";
+        "America/Indiana/Indianapolis" = "US Eastern Standard Time"; "America/Indiana/Vincennes" = "US Eastern Standard Time";
+        "America/Indiana/Winamac" = "US Eastern Standard Time"; "America/Indiana/Marengo" = "US Eastern Standard Time";
+        "America/Indiana/Petersburg" = "US Eastern Standard Time"; "America/Indiana/Vevay" = "US Eastern Standard Time";
+        "America/Toronto" = "Eastern Standard Time";
+
+        "America/Chicago" = "Central Standard Time"; "America/Winnipeg" = "Central Standard Time";
+        "America/Indiana/Tell_City" = "Central Standard Time"; "America/Indiana/Knox" = "Central Standard Time"; # Knox, IN is CT
+        "America/Menominee" = "Central Standard Time";
+
+        "America/Denver" = "Mountain Standard Time"; "America/Edmonton" = "Mountain Standard Time";
+        "America/Boise" = "Mountain Standard Time";
+
+        "America/Phoenix" = "US Mountain Standard Time"; # Arizona does not observe DST
+
+        "America/Los_Angeles" = "Pacific Standard Time"; "America/Vancouver" = "Pacific Standard Time";
+        "America/Tijuana" = "Pacific Standard Time";
+
+        "America/Anchorage" = "Alaskan Standard Time"; "America/Juneau" = "Alaskan Standard Time";
+        "America/Nome" = "Alaskan Standard Time"; "America/Yakutat" = "Alaskan Standard Time";
+
+        "America/Halifax" = "Atlantic Standard Time"; "America/Glace_Bay" = "Atlantic Standard Time";
+        "America/Moncton" = "Atlantic Standard Time"; "America/Goose_Bay" = "Atlantic Standard Time";
+        "Atlantic/Bermuda" = "Atlantic Standard Time";
+
+        "America/St_Johns" = "Newfoundland Standard Time";
+        "Pacific/Honolulu" = "Hawaiian Standard Time";
+
+        # Europe
+        "Europe/London" = "GMT Standard Time"; "Europe/Dublin" = "GMT Standard Time";
+        "Europe/Lisbon" = "GMT Standard Time"; "Atlantic/Canary" = "GMT Standard Time";
+
+        "Europe/Paris" = "Romance Standard Time"; "Europe/Brussels" = "Romance Standard Time";
+        "Europe/Copenhagen" = "Romance Standard Time"; "Europe/Madrid" = "Romance Standard Time";
+
+        "Europe/Berlin" = "W. Europe Standard Time"; "Europe/Amsterdam" = "W. Europe Standard Time";
+        "Europe/Rome" = "W. Europe Standard Time"; "Europe/Stockholm" = "W. Europe Standard Time";
+        "Europe/Vienna" = "W. Europe Standard Time"; "Europe/Oslo" = "W. Europe Standard Time";
+        "Europe/Zurich" = "W. Europe Standard Time";
+
+        "Europe/Prague" = "Central Europe Standard Time"; "Europe/Budapest" = "Central Europe Standard Time";
+        "Europe/Belgrade" = "Central Europe Standard Time"; "Europe/Bratislava" = "Central Europe Standard Time";
+        "Europe/Ljubljana" = "Central Europe Standard Time"; 
+        
+        "Europe/Warsaw" = "Central European Standard Time"; # Note slight difference in Windows name
+
+        "Europe/Helsinki" = "FLE Standard Time"; "Europe/Kiev" = "FLE Standard Time";
+        "Europe/Riga" = "FLE Standard Time"; "Europe/Sofia" = "FLE Standard Time";
+        "Europe/Tallinn" = "FLE Standard Time"; "Europe/Vilnius" = "FLE Standard Time";
+        "Europe/Athens" = "GTB Standard Time"; "Europe/Bucharest" = "GTB Standard Time";
+
+        "Europe/Moscow" = "Russian Standard Time"; # This may vary, Russia has many zones
+        "Europe/Istanbul" = "Turkey Standard Time";
+
+        # Asia
+        "Asia/Tokyo" = "Tokyo Standard Time";
+        "Asia/Shanghai" = "China Standard Time"; "Asia/Hong_Kong" = "China Standard Time";
+        "Asia/Singapore" = "Singapore Standard Time"; "Asia/Kuala_Lumpur" = "Singapore Standard Time";
+        "Asia/Seoul" = "Korea Standard Time";
+        "Asia/Kolkata" = "India Standard Time"; "Asia/Calcutta" = "India Standard Time";
+        "Asia/Bangkok" = "SE Asia Standard Time"; "Asia/Jakarta" = "SE Asia Standard Time";
+        "Asia/Dubai" = "Arabian Standard Time"; "Asia/Muscat" = "Arabian Standard Time";
+        "Asia/Riyadh" = "Arab Standard Time"; "Asia/Kuwait" = "Arab Standard Time";
+        "Asia/Tehran" = "Iran Standard Time";
+        "Asia/Jerusalem" = "Israel Standard Time"; "Asia/Tel_Aviv" = "Israel Standard Time";
+
+        # Australia / Pacific
+        "Australia/Sydney" = "AUS Eastern Standard Time"; "Australia/Melbourne" = "AUS Eastern Standard Time";
+        "Australia/Brisbane" = "E. Australia Standard Time";
+        "Australia/Perth" = "W. Australia Standard Time";
+        "Australia/Adelaide" = "Cen. Australia Standard Time";
+        "Australia/Darwin" = "AUS Central Standard Time";
+        "Pacific/Auckland" = "New Zealand Standard Time";
+        "Pacific/Fiji" = "Fiji Standard Time";
+
+        # Africa
+        "Africa/Cairo" = "Egypt Standard Time";
+        "Africa/Nairobi" = "E. Africa Standard Time";
+        "Africa/Johannesburg" = "South Africa Standard Time";
+        "Africa/Lagos" = "W. Central Africa Standard Time";
+        "Africa/Casablanca" = "Morocco Standard Time";
+
+        # UTC
+        "UTC" = "UTC"; "Etc/GMT" = "UTC"; "GMT" = "UTC"
+    }}
     
-    if ($timezoneMapping.ContainsKey($IANATimeZone)) {
+    if ($IANATimeZone -and $timezoneMapping.ContainsKey($IANATimeZone)) {{
+        Write-Host "  Found explicit mapping for IANA '$IANATimeZone': '$($timezoneMapping[$IANATimeZone])'" -ForegroundColor Green
         return $timezoneMapping[$IANATimeZone]
-    }
-    else {
-        Write-Warning "No mapping found for timezone: $IANATimeZone. Attempting direct conversion..."
-        
-        # Try to find a matching Windows timezone by display name or standard name
+    }}
+    elseif ($IANATimeZone) {{
+        Write-Warning "  No explicit mapping found for IANA timezone: '$IANATimeZone'. Attempting approximate match..."
+        $ianaCityOrRegion = $IANATimeZone.Split('/')[-1].Replace("_", " ")
         $availableTimeZones = Get-TimeZone -ListAvailable
-        $matchingZone = $availableTimeZones | Where-Object { 
-            $_.Id -like "*$($IANATimeZone.Split('/')[-1])*" -or 
-            $_.StandardName -like "*$($IANATimeZone.Split('/')[-1])*"
-        } | Select-Object -First 1
         
-        if ($matchingZone) {
-            Write-Host "Found approximate match: $($matchingZone.Id)" -ForegroundColor Yellow
+        $matchingZone = $availableTimeZones | Where-Object {{
+            $_.StandardName -replace '\s\(.*\)', '' -eq $ianaCityOrRegion -or # Exact match on StandardName (ignoring parenthesized part)
+            $_.Id -replace '\s\(.*\)', '' -eq $ianaCityOrRegion -or           # Exact match on ID (ignoring parenthesized part)
+            $_.StandardName -like "*$ianaCityOrRegion*" -or
+            $_.Id -like "*$ianaCityOrRegion*"
+        }} | Select-Object -First 1
+        
+        if ($matchingZone) {{
+            Write-Host "  Found approximate Windows match for '$IANATimeZone': '$($matchingZone.Id)'" -ForegroundColor Yellow
             return $matchingZone.Id
-        }
-        else {
-            Write-Warning "Could not find Windows timezone for $IANATimeZone. Defaulting to UTC."
-            return "UTC"
-        }
-    }
-}
+        }}
+    }}
+    
+    # Fallback if IANA is null, empty, or no match is found
+    Write-Warning "  Could not map IANA '$IANATimeZone' (or IANA was null/empty). Defaulting to 'Eastern Standard Time' as per script requirement."
+    return "Eastern Standard Time"
+}}
 
 # Function to set the system timezone
-function Set-SystemTimeZone {
+function Set-SystemTimeZone {{
     param (
         [Parameter(Mandatory=$true)]
-        [string]$WindowsTimeZone
+        [string]$WindowsTimeZoneId
     )
-    
-    try {
-        # Get current timezone for comparison
+    try {{
         $currentTimeZone = Get-TimeZone
-        
-        if ($currentTimeZone.Id -eq $WindowsTimeZone) {
-            Write-Host "System is already set to the correct timezone: $WindowsTimeZone" -ForegroundColor Green
+        if ($currentTimeZone.Id -eq $WindowsTimeZoneId) {{
+            Write-Host "  System is already set to the target timezone: $WindowsTimeZoneId" -ForegroundColor Green
             return $true
-        }
+        }}
         
-        # Set the new timezone
-        Set-TimeZone -Id $WindowsTimeZone -PassThru
+        Write-Host "  Attempting to set timezone from '$($currentTimeZone.Id)' to '$WindowsTimeZoneId'..."
+        Set-TimeZone -Id $WindowsTimeZoneId -PassThru -ErrorAction Stop
+        Start-Sleep -Seconds 1 # Brief pause for system to process
         
-        # Verify the change
         $newTimeZone = Get-TimeZone
-        if ($newTimeZone.Id -eq $WindowsTimeZone) {
-            Write-Host "Successfully changed timezone from '$($currentTimeZone.Id)' to '$($newTimeZone.Id)'" -ForegroundColor Green
-            Write-Host "Current local time: $(Get-Date)" -ForegroundColor Cyan
+        if ($newTimeZone.Id -eq $WindowsTimeZoneId) {{
+            Write-Host "  Successfully set timezone to '$($newTimeZone.Id)'" -ForegroundColor Green
+            Write-Host "  Current local time: $(Get-Date)" -ForegroundColor Cyan
             return $true
-        }
-        else {
-            Write-Error "Failed to set timezone. Current timezone is still: $($newTimeZone.Id)"
+        }}
+        else {{
+            Write-Error "  Failed to set timezone. Current timezone is: '$($newTimeZone.Id)', attempted: '$WindowsTimeZoneId'."
+            # Try with tzutil as a fallback for setting
+            Write-Host "  Attempting to set timezone with tzutil.exe /s `"$WindowsTimeZoneId`"..."
+            tzutil.exe /s "$WindowsTimeZoneId"
+            Start-Sleep -Seconds 1
+            $newTimeZoneViaTzUtil = Get-TimeZone
+            if ($newTimeZoneViaTzUtil.Id -eq $WindowsTimeZoneId) {{
+                Write-Host "  Successfully set timezone to '$($newTimeZoneViaTzUtil.Id)' using tzutil." -ForegroundColor Green
+                Write-Host "  Current local time: $(Get-Date)" -ForegroundColor Cyan
+                return $true
+            }} else {{
+                Write-Error "  Failed to set timezone with tzutil as well. Current is $($newTimeZoneViaTzUtil.Id)"
+                return $false
+            }}
+        }}
+    }}
+    catch {{
+        Write-Error "  Exception while setting timezone to '$WindowsTimeZoneId': $($_.Exception.Message)"
+        # Last resort with tzutil on exception
+        Write-Host "  Attempting to set timezone with tzutil.exe /s `"$WindowsTimeZoneId`" due to exception..."
+        tzutil.exe /s "$WindowsTimeZoneId"
+        Start-Sleep -Seconds 1
+        $newTimeZoneOnException = Get-TimeZone
+        if ($newTimeZoneOnException.Id -eq $WindowsTimeZoneId) {{
+            Write-Host "  Successfully set timezone to '$($newTimeZoneOnException.Id)' using tzutil after exception." -ForegroundColor Green
+            return $true
+        }} else {{
+             Write-Error "  Also failed to set timezone with tzutil after exception. Current is $($newTimeZoneOnException.Id)"
             return $false
-        }
-    }
-    catch {
-        Write-Error "Failed to set timezone: $_"
-        return $false
-    }
-}
-
-# Function to test for network changes
-function Test-NetworkChange {
-    $registryPath = "HKLM:\SOFTWARE\AutoTimezone"
-    $lastIPKey = "LastPublicIP"
-    
-    # Ensure registry path exists
-    if (!(Test-Path $registryPath)) {
-        New-Item -Path $registryPath -Force | Out-Null
-    }
-    
-    # Get current public IP
-    try {
-        $currentIP = (Invoke-WebRequest -Uri "https://api.ipify.org/" -UseBasicParsing -TimeoutSec 10).Content.Trim()
-    }
-    catch {
-        Write-Host "Could not determine public IP, assuming network change" -ForegroundColor Yellow
-        return $true
-    }
-    
-    # Get last known IP
-    $lastIP = Get-ItemProperty -Path $registryPath -Name $lastIPKey -ErrorAction SilentlyContinue | Select-Object -ExpandProperty $lastIPKey
-    
-    # Compare IPs
-    if ($currentIP -ne $lastIP) {
-        # Store new IP and additional tracking information
-        Set-ItemProperty -Path $registryPath -Name $lastIPKey -Value $currentIP
-        Set-ItemProperty -Path $registryPath -Name "LastTimezoneUpdate" -Value (Get-Date).ToString()
-        Set-ItemProperty -Path $registryPath -Name "ScriptVersion" -Value "1.1"
-        
-        Write-Host "Network change detected: $lastIP -> $currentIP" -ForegroundColor Green
-        return $true
-    }
-    else {
-        Write-Host "No network change detected (IP: $currentIP)" -ForegroundColor Gray
-        return $false
-    }
-}
+        }}
+    }}
+}}
 
 # Function to update registry tracking
-function Update-RegistryTracking {
+function Update-RegistryTracking {{
     param (
-        [Parameter(Mandatory=$true)]
-        [string]$DetectedTimezone,
-        [Parameter(Mandatory=$true)]
-        [string]$WindowsTimezone,
-        [Parameter(Mandatory=$true)]
-        [string]$Location
+        [string]$DetectedIANATz,
+        [string]$SetWindowsTz,
+        [string]$GeoInfo,
+        [string]$UpdateStatus
     )
-    
-    try {
-        $registryPath = "HKLM:\SOFTWARE\AutoTimezone"
-        
-        # Ensure registry path exists
-        if (!(Test-Path $registryPath)) {
-            New-Item -Path $registryPath -Force | Out-Null
-        }
-        
-        # Store comprehensive tracking information
-        Set-ItemProperty -Path $registryPath -Name "LastDetectedTimezone" -Value $DetectedTimezone
-        Set-ItemProperty -Path $registryPath -Name "LastWindowsTimezone" -Value $WindowsTimezone
-        Set-ItemProperty -Path $registryPath -Name "LastLocation" -Value $Location
-        Set-ItemProperty -Path $registryPath -Name "LastSuccessfulUpdate" -Value (Get-Date).ToString()
-        Set-ItemProperty -Path $registryPath -Name "WindowsAutoTimezoneDisabled" -Value "True"
-        
-        Write-Host "Updated registry tracking information" -ForegroundColor Gray
-    }
-    catch {
-        Write-Warning "Failed to update registry tracking: $_"
-    }
-}
+    try {{
+        if (!(Test-Path $RegistryPath)) {{
+            New-Item -Path $RegistryPath -Force -ErrorAction SilentlyContinue | Out-Null
+        }}
+        Set-ItemProperty -Path $RegistryPath -Name "LastIANATimezoneDetected" -Value $DetectedIANATz -Force -ErrorAction SilentlyContinue
+        Set-ItemProperty -Path $RegistryPath -Name "LastWindowsTimezoneSet" -Value $SetWindowsTz -Force -ErrorAction SilentlyContinue
+        Set-ItemProperty -Path $RegistryPath -Name "LastGeolocationInfo" -Value $GeoInfo -Force -ErrorAction SilentlyContinue
+        Set-ItemProperty -Path $RegistryPath -Name "LastUpdateStatus" -Value $UpdateStatus -Force -ErrorAction SilentlyContinue
+        Set-ItemProperty -Path $RegistryPath -Name "LastUpdateTime" -Value (Get-Date -Format 'u') -Force -ErrorAction SilentlyContinue
+        Set-ItemProperty -Path $RegistryPath -Name "ScriptVersionRun" -Value $ScriptVersion -Force -ErrorAction SilentlyContinue
+        Write-Host "  Updated registry tracking information."
+    }}
+    catch {{
+        Write-Warning "  Failed to update registry tracking: $($_.Exception.Message)"
+    }}
+}}
 
 # Main script execution
-function Main {
-    # Log start time
-    $logPath = "C:\Scripts\TimezoneUpdate.log"
+function Main {{
+    # Start logging to file
+    try {{
+        Start-Transcript -Path $LogFile -Append -Force -ErrorAction Stop
+    }}
+    catch {{
+        Write-Warning "Could not start transcript logging to $LogFile. $($_.Exception.Message)"
+    }}
+
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    Add-Content -Path $logPath -Value "[$timestamp] Timezone update script started (Enhanced v1.1)"
+    $logPrefix = "[$timestamp] ($ScriptVersion)"
     
-    Write-Host "=== Automatic Timezone Configuration Script (Enhanced) ===" -ForegroundColor Cyan
-    Write-Host "This script will detect your location and set the appropriate timezone.`n"
+    Write-Output "$logPrefix Script execution started."
+    Write-Host "`n=== Automatic Timezone Configuration Script ($ScriptVersion) ===" -ForegroundColor Cyan
     
-    # Step 0: Disable Windows automatic timezone features
-    Write-Host "Step 0: Disabling Windows automatic timezone..." -ForegroundColor Yellow
-    $disableResult = Disable-WindowsAutomaticTimezone
-    if ($disableResult) {
-        Add-Content -Path $logPath -Value "[$timestamp] Successfully disabled Windows automatic timezone"
-    } else {
-        Add-Content -Path $logPath -Value "[$timestamp] Warning: Could not fully disable Windows automatic timezone"
-    }
+    Disable-WindowsAutomaticTimezone
     
-    # Check for network change first
-    if (!(Test-NetworkChange)) {
-        Add-Content -Path $logPath -Value "[$timestamp] No network change detected, exiting"
-        Write-Host "No timezone update needed - network unchanged" -ForegroundColor Gray
-        exit 0
-    }
-    
-    # Step 1: Get public IP address
-    Write-Host "`nStep 1: Getting public IP address..." -ForegroundColor Yellow
+    $publicIP = $null
+    $geoData = $null
+    $ianaTimezoneDetected = "N/A"
+    $windowsTimezoneToSet = "Eastern Standard Time" # Overall script default
+    $locationInfo = "Initialization - Defaulting to Eastern Time"
+    $finalStatusMessage = ""
+
     $publicIP = Get-PublicIPAddress
-    if (-not $publicIP) {
-        Add-Content -Path $logPath -Value "[$timestamp] Failed to get public IP address"
-        Write-Error "Cannot proceed without public IP address."
-        exit 1
-    }
     
-    # Step 2: Get geolocation data
-    Write-Host "`nStep 2: Getting geolocation data..." -ForegroundColor Yellow
-    $geoData = Get-GeoLocationData -IPAddress $publicIP
-    if (-not $geoData -or -not $geoData.timezone) {
-        Add-Content -Path $logPath -Value "[$timestamp] Failed to get geolocation data"
-        Write-Error "Cannot proceed without geolocation data."
-        exit 1
-    }
+    if ($publicIP) {{
+        $locationInfo = "Public IP: $publicIP"
+        $geoData = Get-GeoLocationData -IPAddress $publicIP
+        
+        if ($geoData -and $geoData.timezone) {{
+            $ianaTimezoneDetected = $geoData.timezone
+            $locationInfo = "IP: $publicIP, City: $($geoData.city), Region: $($geoData.regionName), Country: $($geoData.country), IANA TZ: $ianaTimezoneDetected"
+            Write-Host "  Successfully retrieved geolocation: $locationInfo" -ForegroundColor Green
+            $windowsTimezoneToSet = Convert-IANAToWindowsTimeZone -IANATimeZone $ianaTimezoneDetected
+        }}
+        else {{
+            $finalStatusMessage = "Failed to get valid geolocation data or IANA timezone for IP $publicIP. Using default '$windowsTimezoneToSet'."
+            Write-Warning "  $finalStatusMessage"
+            $ianaTimezoneDetected = "Unknown (GeoData/IANA missing)"
+            $locationInfo = "IP: $publicIP (GeoData/IANA missing) - Defaulting to ET"
+        }}
+    }}
+    else {{
+        $finalStatusMessage = "Failed to retrieve public IP address. Using default '$windowsTimezoneToSet'."
+        Write-Warning "  $finalStatusMessage"
+        $ianaTimezoneDetected = "Unknown (No Public IP)"
+        $locationInfo = "No Public IP - Defaulting to ET"
+    }}
+
+    Write-Output "$logPrefix Determined target Windows timezone: $windowsTimezoneToSet (IANA: $ianaTimezoneDetected, Location: $locationInfo)"
+    Write-Host "`nAttempting to set system timezone to '$windowsTimeZoneToSet'..." -ForegroundColor Yellow
     
-    # Step 3: Convert IANA timezone to Windows timezone
-    Write-Host "`nStep 3: Converting timezone format..." -ForegroundColor Yellow
-    $windowsTimeZone = Convert-IANAToWindowsTimeZone -IANATimeZone $geoData.timezone
-    Write-Host "Detected timezone: $($geoData.timezone) -> Windows: $windowsTimeZone"
+    if (Set-SystemTimeZone -WindowsTimeZone $windowsTimeZoneToSet) {{
+        $finalStatusMessage = "Successfully set timezone to '$windowsTimezoneToSet'. ($locationInfo)"
+        Write-Host $finalStatusMessage -ForegroundColor Green
+    }}
+    else {{
+        $finalStatusMessage = "Failed to set timezone to '$windowsTimezoneToSet'. ($locationInfo)"
+        Write-Error $finalStatusMessage
+    }}
     
-    # Step 4: Set the system timezone
-    Write-Host "`nStep 4: Setting system timezone..." -ForegroundColor Yellow
-    $success = Set-SystemTimeZone -WindowsTimeZone $windowsTimeZone
+    Update-RegistryTracking -DetectedIANATz $ianaTimezoneDetected -SetWindowsTz $windowsTimezoneToSet -GeoInfo $locationInfo -UpdateStatus $finalStatusMessage
     
-    # Step 5: Update registry tracking
-    $locationString = "$($geoData.city), $($geoData.regionName), $($geoData.country)"
-    Update-RegistryTracking -DetectedTimezone $geoData.timezone -WindowsTimezone $windowsTimeZone -Location $locationString
+    Write-Output "$logPrefix Script execution finished. Status: $finalStatusMessage"
+    Write-Host "`n=== Timezone Configuration Attempt Complete ($ScriptVersion) ===" -ForegroundColor Cyan
     
-    if ($success) {
-        Add-Content -Path $logPath -Value "[$timestamp] Successfully updated timezone to $windowsTimeZone (Location: $locationString)"
-        Write-Host "`n=== Configuration Complete ===" -ForegroundColor Green
-        Write-Host "Your system timezone has been automatically configured based on your location."
-        Write-Host "Windows automatic timezone has been disabled to prevent conflicts." -ForegroundColor Yellow
-    }
-    else {
-        Add-Content -Path $logPath -Value "[$timestamp] Failed to update timezone to $windowsTimeZone"
-        Write-Host "`n=== Configuration Failed ===" -ForegroundColor Red
-        Write-Host "Please manually set your timezone using: Set-TimeZone -Id '$windowsTimeZone'"
-    }
-}
+    Stop-Transcript
+}}
 
 # Run the main function
 Main
-'@
+'@ # End of $timezoneScriptContent heredoc
+
+# Inject dynamic paths into the script content
+$timezoneScriptContent = $timezoneScriptContent -replace '\{0\}', [regex]::Escape($logFileForInnerScript)
+$timezoneScriptContent = $timezoneScriptContent -replace '\{1\}', [regex]::Escape($registryKeyForInnerScript)
 
 try {
-    $timezoneScript | Out-File -FilePath $scriptPath -Encoding UTF8 -Force
-    Write-Host "Created enhanced timezone script: $scriptPath" -ForegroundColor Green
+    Set-Content -Path $scriptPath -Value $timezoneScriptContent -Encoding UTF8 -Force -ErrorAction Stop
+    Write-Host "  Created/Updated timezone detection script: $scriptPath" -ForegroundColor Green
 }
 catch {
-    Write-Error "Failed to create script file: $_"
+    Write-Error "  Failed to create script file '$scriptPath': $($_.Exception.Message)"
     exit 1
 }
 
-# Step 3: Create the scheduled task
-Write-Host "`nStep 3: Creating scheduled task..." -ForegroundColor Yellow
+# Step 3: Create or update the scheduled task (delete if exists, then create)
+Write-Host "`nStep 3: Creating/Updating scheduled task '$taskName'..." -ForegroundColor Yellow
 
 try {
-    # Remove existing task if it exists
     $existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
     if ($existingTask) {
-        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
-        Write-Host "Removed existing task: $taskName" -ForegroundColor Yellow
+        Write-Host "  Found existing task '$taskName'. Unregistering..." -ForegroundColor Yellow
+        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction Stop
+        Write-Host "  Existing task '$taskName' unregistered." -ForegroundColor Green
     }
 
-    # Define the action to run the timezone script
-    $action = New-ScheduledTaskAction -Execute "PowerShell.exe" -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""
+    $action = New-ScheduledTaskAction -Execute "PowerShell.exe" -Argument "-ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File `"$scriptPath`"" -ErrorAction Stop
     
-    # Create triggers for network events
     $triggers = @()
-    $triggers += New-ScheduledTaskTrigger -AtLogOn
-    $triggers += New-ScheduledTaskTrigger -AtStartup
+    $triggers += New-ScheduledTaskTrigger -AtLogOn -ErrorAction Stop
+    $triggers += New-ScheduledTaskTrigger -AtStartup -ErrorAction Stop
     
-    # Configure settings
-    $settings = New-ScheduledTaskSettingsSet -RunOnlyIfNetworkAvailable -MultipleInstances IgnoreNew -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 2) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+    # Trigger on network connection event (NetworkProfile Event ID 10000 - a network is connected and identified)
+    # This is more reliable than generic "network available" for detecting actual network changes that might imply location change.
+    try {
+         $triggers += New-ScheduledTaskTrigger -EventIdentifier 10000 -Source "NetworkProfile" -LogName "Microsoft-Windows-NetworkProfile/Operational" -ErrorAction Stop
+         Write-Host "  Added trigger for NetworkProfile Event ID 10000." -ForegroundColor DarkGray
+    } catch {
+        Write-Warning "  Could not create NetworkProfile event trigger (Source/Log may not exist or permissions issue): $($_.Exception.Message). Task will use Logon/Startup only."
+    }
     
-    # Set principal to run as SYSTEM
-    $principal = New-ScheduledTaskPrincipal -UserId "NT AUTHORITY\SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet `
+        -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries `
+        -ExecutionTimeLimit (New-TimeSpan -Minutes 10) `
+        -MultipleInstances IgnoreNew `
+        -Priority 4 `
+        -RestartCount 3 `
+        -RestartInterval (New-TimeSpan -Minutes 5) `
+        -RunOnlyIfNetworkAvailable:$false # Script handles network checks internally; task should always try to run
+        # -WakeToRun # Consider if waking the computer is desired for this task
+
+    $principal = New-ScheduledTaskPrincipal -UserId "NT AUTHORITY\SYSTEM" -LogonType ServiceAccount -RunLevel Highest -ErrorAction Stop
     
-    # Register the task
-    Register-ScheduledTask -TaskName $taskName -TaskPath "\" -Description "Automatically updates timezone based on IP geolocation when network changes (Enhanced version with Windows auto-timezone disabled)" -Action $action -Settings $settings -Trigger $triggers -Principal $principal | Out-Null
+    Register-ScheduledTask -TaskName $taskName -TaskPath "\" -Description "Automatically updates timezone based on IP geolocation (v1.3 - ET Fallback). Runs as SYSTEM." -Action $action -Settings $settings -Trigger $triggers -Principal $principal -Force -ErrorAction Stop | Out-Null
     
-    Write-Host "Created enhanced scheduled task: $taskName" -ForegroundColor Green
+    Write-Host "  Successfully created/updated scheduled task: '$taskName'" -ForegroundColor Green
+    Write-Host "  Task will run as SYSTEM at Startup, User Logon, and on specific Network Events (if trigger created)." -ForegroundColor Green
 }
 catch {
-    Write-Error "Failed to create scheduled task: $_"
-    exit 1
+    Write-Error "  Failed to create/update scheduled task '$taskName': $($_.Exception.Message)"
+    # Do not exit here, attempt to verify what was done and then run if task exists.
 }
 
 # Step 4: Verify the setup
 Write-Host "`nStep 4: Verifying setup..." -ForegroundColor Yellow
-
-# Check if script file exists
 if (Test-Path $scriptPath) {
-    Write-Host "✓ Enhanced script file created successfully" -ForegroundColor Green
-}
-else {
-    Write-Host "✗ Script file not found" -ForegroundColor Red
+    Write-Host "  ✓ Script file found: $scriptPath" -ForegroundColor Green
+} else {
+    Write-Host "  ✗ Script file NOT found: $scriptPath" -ForegroundColor Red
 }
 
-# Check if scheduled task exists
 $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 if ($task) {
-    Write-Host "✓ Enhanced scheduled task created successfully" -ForegroundColor Green
-    Write-Host "  Task Name: $($task.TaskName)" -ForegroundColor Gray
-    Write-Host "  Task Path: $($task.TaskPath)" -ForegroundColor Gray
-    Write-Host "  State: $($task.State)" -ForegroundColor Gray
-}
-else {
-    Write-Host "✗ Scheduled task not found" -ForegroundColor Red
-}
-
-# Check Windows automatic timezone status
-Write-Host "`nStep 5: Checking Windows automatic timezone status..." -ForegroundColor Yellow
-$tzAutoUpdate = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\tzautoupdate" -Name "Start" -ErrorAction SilentlyContinue
-if ($tzAutoUpdate -and $tzAutoUpdate.Start -eq 4) {
-    Write-Host "✓ Windows automatic timezone is disabled" -ForegroundColor Green
+    Write-Host "  ✓ Scheduled task '$($task.TaskName)' confirmed." -ForegroundColor Green
+    Write-Host "    State: $($task.State)" -ForegroundColor Gray
+    Write-Host "    Triggers: $($task.Triggers.TriggerType -join ', ')" -ForegroundColor Gray
 } else {
-    Write-Host "⚠ Windows automatic timezone may still be enabled" -ForegroundColor Yellow
+    Write-Host "  ✗ Scheduled task '$taskName' NOT found or failed to create." -ForegroundColor Red
 }
 
-Write-Host "`n=== Enhanced Setup Complete ===" -ForegroundColor Cyan
-Write-Host "The enhanced automatic timezone configuration system has been installed." -ForegroundColor Green
-Write-Host "Key improvements in this version:" -ForegroundColor Yellow
-Write-Host "  • Windows automatic timezone disabled to prevent conflicts" -ForegroundColor Gray
-Write-Host "  • Enhanced registry tracking with additional metadata" -ForegroundColor Gray
-Write-Host "  • Improved logging and error handling" -ForegroundColor Gray
-Write-Host "  • Better conflict prevention with Windows built-in features" -ForegroundColor Gray
-Write-Host "`nThe system will now automatically detect and set the correct timezone when:" -ForegroundColor Yellow
-Write-Host "  • The computer starts up" -ForegroundColor Gray
-Write-Host "  • A user logs in" -ForegroundColor Gray
-Write-Host "  • The network connection changes" -ForegroundColor Gray
-Write-Host "`nLog file location: C:\Scripts\TimezoneUpdate.log" -ForegroundColor Cyan
-Write-Host "Registry tracking: HKLM:\SOFTWARE\AutoTimezone" -ForegroundColor Cyan
+# Step 5: Run the scheduled task immediately
+Write-Host "`nStep 5: Attempting to run the scheduled task '$taskName' immediately..." -ForegroundColor Yellow
+if ($task) {
+    try {
+        Start-ScheduledTask -TaskName $taskName -ErrorAction Stop
+        Write-Host "  Successfully initiated an immediate run of task '$taskName'." -ForegroundColor Green
+        Write-Host "  Check the log file for execution details: $logFileForInnerScript"
+    }
+    catch {
+        Write-Error "  Failed to start scheduled task '$taskName': $($_.Exception.Message)"
+        Write-Warning "  You might need to run it manually from Task Scheduler or wait for the next trigger."
+    }
+} else {
+    Write-Warning "  Cannot run task '$taskName' as it was not found or failed to create."
+}
+
+# Check Windows automatic timezone service status (informational)
+Write-Host "`nStep 6: Informational - Checking Windows automatic timezone service (tzautoupdate) status..." -ForegroundColor Yellow
+try {
+    $tzService = Get-Service -Name "tzautoupdate" -ErrorAction SilentlyContinue
+    if ($tzService) {
+        Write-Host "  tzautoupdate service status: $($tzService.Status), StartType: $($tzService.StartType)" -ForegroundColor Gray
+    } else {
+        Write-Host "  tzautoupdate service not found (this is normal if it was removed or on older OS)." -ForegroundColor Gray
+    }
+} catch {
+    Write-Warning "  Could not verify tzautoupdate service status: $($_.Exception.Message)"
+}
+
+
+Write-Host "`n=== Setup Script Finished (v1.3) ===" -ForegroundColor Cyan
