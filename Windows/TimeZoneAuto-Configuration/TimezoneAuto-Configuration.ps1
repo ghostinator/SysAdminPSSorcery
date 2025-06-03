@@ -1,9 +1,10 @@
-# Timezone Auto-Configuration Setup Script (v1.6.0 - XML Event Trigger)
+# Timezone Auto-Configuration Setup Script (v1.7.0 - Enhanced DNS Resolution)
 # This script creates the timezone detection script and scheduled task.
 # It ensures Windows automatic timezone features are disabled to prevent conflicts.
 # It defaults to Eastern Time if geolocation fails or IANA mapping is unsuccessful.
 # It deletes any existing scheduled task with the same name before creation.
 # It runs the newly created scheduled task immediately after setup.
+# Enhanced with direct DNS resolution to Cloudflare and Google DNS for reliability.
 
 # Configuration
 $scriptFolder = "C:\Scripts"
@@ -12,13 +13,14 @@ $taskName = "AutoTimezoneUpdate"
 $logFileForInnerScript = Join-Path -Path $scriptFolder -ChildPath "TimezoneUpdate.log"
 $registryKeyForInnerScript = "HKLM:\SOFTWARE\AutoTimezone"
 
-Write-Host "=== Timezone Auto-Configuration Setup (v1.6.0) ===" -ForegroundColor Cyan
+Write-Host "=== Timezone Auto-Configuration Setup (v1.7.0) ===" -ForegroundColor Cyan
 Write-Host "Setting up automatic timezone detection and configuration..." -ForegroundColor Yellow
 Write-Host "  - Script will be placed in: $scriptFolder"
 Write-Host "  - Scheduled Task Name: $taskName"
 Write-Host "  - Default Timezone on failure: Eastern Standard Time"
 Write-Host "  - Log for detection script: $logFileForInnerScript"
 Write-Host "  - Registry tracking: $registryKeyForInnerScript"
+Write-Host "  - Enhanced DNS resolution with Cloudflare and Google DNS"
 
 # Step 1: Create the Scripts folder if it doesn't exist
 Write-Host "`nStep 1: Ensuring script directory exists..." -ForegroundColor Yellow
@@ -40,30 +42,148 @@ else {
 Write-Host "`nStep 2: Creating timezone detection script ($($scriptPath))..." -ForegroundColor Yellow
 
 $timezoneScriptContent = @'
-# Automatic Timezone Detection and Configuration Script (v1.6.0 - XML Event Trigger Setup)
+# Automatic Timezone Detection and Configuration Script (v1.7.0 - Enhanced DNS Resolution)
 # This script detects location based on public IP and sets appropriate timezone.
 # Disables Windows automatic timezone features to prevent conflicts.
 # Defaults to Eastern Time if geolocation fails or IANA mapping is unsuccessful.
+# Enhanced with direct DNS resolution to Cloudflare and Google DNS for reliability.
+# Compatible with Windows PowerShell 5.1
 
 # Configuration for this script
-$ScriptVersion = "1.6.0-ET-Fallback"
+$ScriptVersion = "1.7.0-Enhanced-DNS-PS51"
 $LogFile = "{0}" # Placeholder for $logFileForInnerScript
 $RegistryPath = "{1}" # Placeholder for $registryKeyForInnerScript
+
+# DNS Servers for enhanced resolution
+$DNSServers = @(
+    "1.1.1.1",      # Cloudflare Primary
+    "1.0.0.1",      # Cloudflare Secondary
+    "8.8.8.8",      # Google Primary
+    "8.8.4.4",      # Google Secondary
+    "208.67.222.222", # OpenDNS Primary
+    "208.67.220.220"  # OpenDNS Secondary
+)
+
+# Function to resolve hostname with fallback DNS servers
+function Resolve-HostnameWithFallback {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$Hostname
+    )
+    
+    Write-Host "Attempting DNS resolution for: $Hostname"
+    
+    # First try system DNS
+    try {
+        $systemResult = [System.Net.Dns]::GetHostAddresses($Hostname) | Where-Object { $_.AddressFamily -eq 'InterNetwork' } | Select-Object -First 1
+        if ($systemResult) {
+            Write-Host "  ✓ Resolved via system DNS: $($systemResult.IPAddressToString)" -ForegroundColor Green
+            return $systemResult.IPAddressToString
+        }
+    }
+    catch {
+        Write-Warning "  System DNS resolution failed: $($_.Exception.Message)"
+    }
+    
+    # Try each DNS server as fallback
+    foreach ($dnsServer in $DNSServers) {
+        try {
+            Write-Host "  Trying DNS server: $dnsServer"
+            
+            # Use nslookup as a fallback method
+            $nslookupResult = & nslookup $Hostname $dnsServer 2>$null
+            if ($nslookupResult) {
+                $ipMatch = $nslookupResult | Select-String -Pattern '\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b' | Select-Object -First 1
+                if ($ipMatch) {
+                    $resolvedIP = $ipMatch.Matches[0].Value
+                    # Validate it's not the DNS server IP itself
+                    if ($resolvedIP -ne $dnsServer) {
+                        Write-Host "  ✓ Resolved via $dnsServer : $resolvedIP" -ForegroundColor Green
+                        return $resolvedIP
+                    }
+                }
+            }
+        }
+        catch {
+            Write-Warning "  DNS resolution via $dnsServer failed: $($_.Exception.Message)"
+        }
+    }
+    
+    Write-Warning "  All DNS resolution attempts failed for: $Hostname"
+    return $null
+}
+
+# Function to test network connectivity with DNS fallback 
+function Test-NetworkConnectivityWithDNS {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$TargetHost,
+        [int]$TimeoutSeconds = 5
+    )
+    
+    # First resolve the hostname
+    $resolvedIP = Resolve-HostnameWithFallback -Hostname $TargetHost
+    if (-not $resolvedIP) {
+        Write-Warning "Could not resolve $TargetHost to IP address"
+        return $false
+    }
+    
+    # Test connectivity to resolved IP using Windows PowerShell 5.1 compatible method
+    try {
+        # Use Test-NetConnection if available (Windows 8.1/Server 2012 R2 and later)
+        if (Get-Command Test-NetConnection -ErrorAction SilentlyContinue) {
+            $result = Test-NetConnection -ComputerName $resolvedIP -Port 80 -InformationLevel Quiet -WarningAction SilentlyContinue
+            if ($result) {
+                Write-Host "  ✓ Network connectivity confirmed to $TargetHost ($resolvedIP)" -ForegroundColor Green
+                return $true
+            }
+        }
+        else {
+            # Fallback to Test-Connection with Windows PowerShell 5.1 compatible parameters
+            $ping = Test-Connection -ComputerName $resolvedIP -Count 1 -Quiet
+            if ($ping) {
+                Write-Host "  ✓ Network connectivity confirmed to $TargetHost ($resolvedIP)" -ForegroundColor Green
+                return $true
+            }
+        }
+    }
+    catch {
+        Write-Warning "  Network connectivity test failed to $TargetHost ($resolvedIP): $($_.Exception.Message)"
+    }
+    
+    # Additional fallback using .NET ping
+    try {
+        $ping = New-Object System.Net.NetworkInformation.Ping
+        $timeout = $TimeoutSeconds * 1000  # Convert to milliseconds
+        $result = $ping.Send($resolvedIP, $timeout)
+        if ($result.Status -eq 'Success') {
+            Write-Host "  ✓ Network connectivity confirmed to $TargetHost ($resolvedIP) via .NET ping" -ForegroundColor Green
+            return $true
+        }
+    }
+    catch {
+        Write-Warning "  .NET ping test failed to $TargetHost ($resolvedIP): $($_.Exception.Message)"
+    }
+    
+    return $false
+}
 
 # Function to robustly disable Windows automatic timezone features
 function Disable-WindowsAutomaticTimezone {
     Write-Host "Attempting to disable/control Windows automatic timezone features..."
-    $ErrorActionPreference = 'SilentlyContinue' 
+    $ErrorActionPreference = 'SilentlyContinue' # Suppress errors for individual operations but log overall
 
+    # Disable Time Zone Auto Update service
     try {
         Set-Service -Name tzautoupdate -StartupType Disabled -ErrorAction Stop
-        Stop-Service -Name tzautoupdate -Force -ErrorAction SilentlyContinue 
+        Stop-Service -Name tzautoupdate -Force -ErrorAction SilentlyContinue # Stop if running
         Write-Host "  ✓ Windows Time Zone Auto Update service (tzautoupdate) set to Disabled." -ForegroundColor Green
     }
     catch {
         Write-Warning ("  ⚠ Could not set tzautoupdate service startup type or stop it: {0}" -f $_.Exception.Message)
     }
 
+    # Disable "Set time zone automatically" via known registry setting (Windows 10/11 UI)
     $timeSettingsPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\DateTime\Servers"
     if (Test-Path $timeSettingsPath) {
         try {
@@ -75,6 +195,7 @@ function Disable-WindowsAutomaticTimezone {
         }
     }
 
+    # Deny location access for general location capability
     $locationCapabilityPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location"
     if (Test-Path $locationCapabilityPath) {
         try {
@@ -86,6 +207,7 @@ function Disable-WindowsAutomaticTimezone {
         }
     }
 
+    # Ensure DynamicDaylightTimeDisabled is NOT set to 1
     $tzInfoPath = "HKLM:\SYSTEM\CurrentControlSet\Control\TimeZoneInformation"
     try {
         $currentDynamicDst = Get-ItemProperty -Path $tzInfoPath -Name "DynamicDaylightTimeDisabled" -ErrorAction SilentlyContinue
@@ -107,61 +229,126 @@ function Disable-WindowsAutomaticTimezone {
     Write-Host "  Finished attempt to disable/control Windows automatic timezone features."
 }
 
-# Function to get public IP address
+# Function to get public IP address with enhanced DNS resolution 
 function Get-PublicIPAddress {
-    $uris = @(
-        "https://api.ipify.org/",
-        "https://ipinfo.io/ip",
-        "https://icanhazip.com/",
-        "https://checkip.amazonaws.com/"
+    $ipServices = @(
+        @{ Uri = "https://api.ipify.org/"; Host = "api.ipify.org" },
+        @{ Uri = "https://ipinfo.io/ip"; Host = "ipinfo.io" },
+        @{ Uri = "https://icanhazip.com/"; Host = "icanhazip.com" },
+        @{ Uri = "https://checkip.amazonaws.com/"; Host = "checkip.amazonaws.com" },
+        @{ Uri = "https://ip4.seeip.org/"; Host = "ip4.seeip.org" },
+        @{ Uri = "https://myexternalip.com/raw"; Host = "myexternalip.com" }
     )
-    foreach ($uri in $uris) {
+    
+    foreach ($service in $ipServices) {
         try {
-            Write-Host "Attempting to get public IP from $uri..."
-            $response = Invoke-WebRequest -Uri $uri -UseBasicParsing -TimeoutSec 7 -ErrorAction Stop
-            $publicIP = $response.Content.Trim()
-            if ($publicIP -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$') {
-                Write-Host ("  Public IP Address: {0} (from {1})" -f $publicIP, $uri) -ForegroundColor Green
-                return $publicIP
+            Write-Host "Testing connectivity to $($service.Host)..."
+            
+            # Test network connectivity first with DNS resolution
+            if (Test-NetworkConnectivityWithDNS -TargetHost $service.Host -TimeoutSeconds 5) {
+                Write-Host "Attempting to get public IP from $($service.Uri)..."
+                # Use TimeoutSec parameter (compatible with Windows PowerShell 5.1)
+                $response = Invoke-WebRequest -Uri $service.Uri -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+                $publicIP = $response.Content.Trim()
+                
+                if ($publicIP -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$') {
+                    Write-Host ("  ✓ Public IP Address: {0} (from {1})" -f $publicIP, $service.Uri) -ForegroundColor Green
+                    return $publicIP
+                }
+                else {
+                    Write-Warning ("  Invalid IP format from {0}: '{1}'" -f $service.Uri, $publicIP)
+                }
             }
             else {
-                Write-Warning ("  Invalid IP format from {0}: '{1}'" -f $uri, $publicIP)
+                Write-Warning ("  Network connectivity test failed for {0}" -f $service.Host)
             }
         }
         catch {
-            Write-Warning ("  Failed to retrieve public IP address from {0}: {1}" -f $uri, $_.Exception.Message)
+            Write-Warning ("  Failed to retrieve public IP address from {0}: {1}" -f $service.Uri, $_.Exception.Message)
         }
     }
     Write-Error "Failed to retrieve public IP address from all configured sources."
     return $null
 }
 
-# Function to get geolocation data including timezone
+# Function to get geolocation data including timezone with enhanced DNS
 function Get-GeoLocationData {
     param (
         [Parameter(Mandatory=$true)]
         [string]$IPAddress
     )
-    try {
-        $apiUrl = "http://ip-api.com/json/$IPAddress"
-        Write-Host "Querying geolocation API: $apiUrl"
-        $geoData = Invoke-RestMethod -Uri $apiUrl -Method Get -TimeoutSec 10 -ErrorAction Stop
-        
-        if ($geoData.status -eq "success") {
-            Write-Host "  Location Details (from ip-api.com):" -ForegroundColor Yellow
-            Write-Host ("    City: {0}, Region: {1}, Country: {2}" -f $geoData.city, $geoData.regionName, $geoData.country)
-            Write-Host ("    IANA Timezone: {0}" -f $geoData.timezone) -ForegroundColor Green
-            return $geoData
+    
+    $geoServices = @(
+        @{ Uri = "http://ip-api.com/json/$IPAddress"; Host = "ip-api.com"; Name = "ip-api.com" },
+        @{ Uri = "https://ipapi.co/$IPAddress/json/"; Host = "ipapi.co"; Name = "ipapi.co" },
+        @{ Uri = "http://www.geoplugin.net/json.gp?ip=$IPAddress"; Host = "www.geoplugin.net"; Name = "geoplugin.net" }
+    )
+    
+    foreach ($service in $geoServices) {
+        try {
+            Write-Host "Testing connectivity to $($service.Host) for geolocation..."
+            
+            if (Test-NetworkConnectivityWithDNS -TargetHost $service.Host -TimeoutSeconds 5) {
+                Write-Host "Querying geolocation API: $($service.Uri)"
+                # Use TimeoutSec parameter (compatible with Windows PowerShell 5.1)
+                $geoData = Invoke-RestMethod -Uri $service.Uri -Method Get -TimeoutSec 15 -ErrorAction Stop
+                
+                # Handle different API response formats
+                $timezone = $null
+                $city = $null
+                $region = $null
+                $country = $null
+                
+                if ($service.Name -eq "ip-api.com") {
+                    if ($geoData.status -eq "success") {
+                        $timezone = $geoData.timezone
+                        $city = $geoData.city
+                        $region = $geoData.regionName
+                        $country = $geoData.country
+                    }
+                }
+                elseif ($service.Name -eq "ipapi.co") {
+                    $timezone = $geoData.timezone
+                    $city = $geoData.city
+                    $region = $geoData.region
+                    $country = $geoData.country_name
+                }
+                elseif ($service.Name -eq "geoplugin.net") {
+                    $timezone = $geoData.geoplugin_timezone
+                    $city = $geoData.geoplugin_city
+                    $region = $geoData.geoplugin_regionName
+                    $country = $geoData.geoplugin_countryName
+                }
+                
+                if ($timezone) {
+                    Write-Host "  ✓ Location Details (from $($service.Name)):" -ForegroundColor Yellow
+                    Write-Host ("    City: {0}, Region: {1}, Country: {2}" -f $city, $region, $country)
+                    Write-Host ("    IANA Timezone: {0}" -f $timezone) -ForegroundColor Green
+                    
+                    # Create standardized response object
+                    return @{
+                        timezone = $timezone
+                        city = $city
+                        regionName = $region
+                        country = $country
+                        status = "success"
+                    }
+                }
+                else {
+                    Write-Warning ("  No timezone data received from {0}" -f $service.Name)
+                }
+            }
+            else {
+                Write-Warning ("  Network connectivity test failed for {0}" -f $service.Host)
+            }
         }
-        else {
-            Write-Error ("  Geolocation lookup failed (ip-api.com status: {0}, message: {1})" -f $geoData.status, $geoData.message)
-            return $null
+        catch {
+            Write-Warning ("  Exception during geolocation data retrieval from {0}: {1}" -f $service.Name, $_.Exception.Message)
         }
     }
-    catch {
-        Write-Error ("  Exception during geolocation data retrieval: {0}" -f $_.Exception.Message)
-        return $null
-    }
+    
+    Write-Error "Failed to retrieve geolocation data from all configured sources."
+    return $null
 }
 
 # Function to convert IANA timezone to Windows timezone
@@ -181,7 +368,7 @@ function Convert-IANAToWindowsTimeZone {
         "America/Toronto" = "Eastern Standard Time";
 
         "America/Chicago" = "Central Standard Time"; "America/Winnipeg" = "Central Standard Time";
-        "America/Indiana/Tell_City" = "Central Standard Time"; "America/Indiana/Knox" = "Central Standard Time";
+        "America/Indiana/Elkhart" = "US Eastern Standard Time";
         "America/Menominee" = "Central Standard Time";
 
         "America/Denver" = "Mountain Standard Time"; "America/Edmonton" = "Mountain Standard Time";
@@ -239,6 +426,7 @@ function Convert-IANAToWindowsTimeZone {
         "Asia/Riyadh" = "Arab Standard Time"; "Asia/Kuwait" = "Arab Standard Time";
         "Asia/Tehran" = "Iran Standard Time";
         "Asia/Jerusalem" = "Israel Standard Time"; "Asia/Tel_Aviv" = "Israel Standard Time";
+        "Asia/Manila" = "Singapore Standard Time";
 
         # Australia / Pacific
         "Australia/Sydney" = "AUS Eastern Standard Time"; "Australia/Melbourne" = "AUS Eastern Standard Time";
@@ -380,6 +568,7 @@ function Main {
     
     Write-Output "$logPrefix Script execution started."
     Write-Host "`n=== Automatic Timezone Configuration Script ($ScriptVersion) ===" -ForegroundColor Cyan
+    Write-Host "Enhanced with Cloudflare (1.1.1.1, 1.0.0.1) and Google (8.8.8.8, 8.8.4.4) DNS resolution" -ForegroundColor Yellow
     
     Disable-WindowsAutomaticTimezone
     
@@ -471,7 +660,7 @@ try {
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>Automatically updates timezone based on IP geolocation (v1.6.3 - XML Principal Fix). Runs as SYSTEM.</Description>
+    <Description>Automatically updates timezone based on IP geolocation (v1.7.0 - Enhanced DNS Resolution). Runs as SYSTEM with Cloudflare and Google DNS fallback.</Description>
     <Author>PowerShell Script</Author>
     <URI>\$($taskName)</URI>
   </RegistrationInfo>
@@ -547,7 +736,7 @@ catch {
 Write-Host "`nStep 4: Verifying setup..." -ForegroundColor Yellow
 if (Test-Path $scriptPath) {
     Write-Host "  ✓ Script file found: $scriptPath" -ForegroundColor Green
-} 
+}
 else {
     Write-Host "  ✗ Script file NOT found: $scriptPath" -ForegroundColor Red
 }
@@ -562,14 +751,14 @@ if ($task) {
     } else {
         Write-Host "    Triggers: None found or unable to read." -ForegroundColor Yellow
     }
-} 
+}
 else {
     Write-Host "  ✗ Scheduled task '$taskName' NOT found or may have failed to create properly." -ForegroundColor Red
 }
 
 # Step 5: Run the scheduled task immediately
 Write-Host "`nStep 5: Attempting to run the scheduled task '$taskName' immediately..." -ForegroundColor Yellow
-$taskToRun = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue # Re-fetch to be sure
+$taskToRun = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 if ($taskToRun) {
     try {
         Start-ScheduledTask -TaskName $taskName -ErrorAction Stop
@@ -597,4 +786,11 @@ try {
     Write-Warning ("  Could not verify tzautoupdate service status: {0}" -f $_.Exception.Message)
 }
 
-Write-Host "`n=== Setup Script Finished (v1.6.0) ===" -ForegroundColor Cyan
+Write-Host "`n=== Setup Script Finished (v1.7.0 - Enhanced DNS Resolution) ===" -ForegroundColor Cyan
+Write-Host "Enhanced features added:" -ForegroundColor Yellow
+Write-Host "  • Direct DNS resolution using Cloudflare (1.1.1.1, 1.0.0.1)" -ForegroundColor Green
+Write-Host "  • Fallback to Google DNS (8.8.8.8, 8.8.4.4)" -ForegroundColor Green
+Write-Host "  • Additional DNS servers (OpenDNS)" -ForegroundColor Green
+Write-Host "  • Multiple geolocation API sources" -ForegroundColor Green
+Write-Host "  • Enhanced network connectivity testing" -ForegroundColor Green
+Write-Host "  • Windows PowerShell 5.1 compatibility" -ForegroundColor Green
