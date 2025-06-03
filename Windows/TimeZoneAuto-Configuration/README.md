@@ -1,322 +1,432 @@
-# Automatic Timezone Configuration for Windows (v1.3)
+# Automatic Timezone Configuration for Windows
 
-A robust PowerShell solution that automatically detects and configures the correct timezone on Windows computers based on their public IP address geolocation. This script is designed for organizations with mobile users, remote workers, or devices that travel, ensuring accurate timekeeping. **This version (v1.3) enhances conflict prevention by disabling Windows native automatic timezone features, defaults to Eastern Time on detection failures, deletes pre-existing scheduled tasks of the same name, and runs the task immediately after setup.**
+A PowerShell solution that automatically detects and configures the correct timezone on Windows computers based on their public IP address geolocation. Perfect for organizations with mobile users, remote workers, or devices that travel between time zones. **Enhanced version 1.7.0 with robust DNS resolution and Windows automatic timezone conflict prevention.**
 
 ## 🌍 Overview
 
-This solution automates timezone management by:
-- **Disabling Windows built-in automatic timezone features** to ensure consistent behavior and prevent conflicts.
-- Detecting the device's public IP address using multiple reliable external services.
-- Geolocating the IP address to determine the city, region, country, and IANA (Internet Assigned Numbers Authority) timezone.
-- **Defaulting to "Eastern Standard Time"** if IP lookup or geolocation fails.
-- Converting the IANA timezone identifier to the appropriate Windows timezone format using an extensive internal mapping.
-    - If a received IANA timezone cannot be mapped, it also defaults to "Eastern Standard Time".
-- Setting the system timezone accordingly.
-- Triggering updates on system startup, user logon, and specific network connection events.
-- Maintaining a detailed log of all operations and comprehensive tracking data in the registry.
+This script automatically:
+- **Disables Windows built-in automatic timezone detection** to prevent conflicts
+- **Enhanced DNS resolution** with Cloudflare (1.1.1.1, 1.0.0.1) and Google DNS (8.8.8.8, 8.8.4.4) fallback
+- Detects your public IP address using multiple reliable sources
+- Geolocates the IP to determine timezone with multiple API providers
+- Converts IANA timezone identifiers to Windows timezone format
+- Sets the system timezone appropriately with dual-method fallback
+- **Network connectivity testing** with DNS resolution verification
+- Logs all activities for troubleshooting with enhanced detail
+- **Windows PowerShell 5.1 compatibility** for legacy systems
 
 ## ✨ Features
 
-- **🔧 Conflict Prevention**: Actively disables Windows built-in location-based timezone services (`tzautoupdate`) and related settings to ensure the script has sole control.
-- **🌐 Automatic & Resilient Detection**: Uses IP geolocation (via `ip-api.com`) and multiple IP lookup services (`api.ipify.org`, `ipinfo.io/ip`, etc.) for reliable timezone determination.
-- **⏰ Intelligent Fallback**: Defaults to "Eastern Standard Time" if accurate geolocation or IANA timezone mapping fails.
-- **🗺️ Comprehensive Timezone Mapping**: Includes an extensive, updatable list mapping IANA timezones (e.g., "America/Indiana/Indianapolis") to Windows Time Zone IDs (e.g., "US Eastern Standard Time").
-- **⚙️ Automated Scheduled Task**:
-    - Named "AutoTimezoneUpdate".
-    - Runs with `NT AUTHORITY\SYSTEM` privileges.
-    - Triggers on system startup, user logon, and network connection events (NetworkProfile Event ID 10000).
-    - The setup script **deletes any pre-existing task with the same name** before creating the new one.
-    - The setup script **runs the task immediately** after successful configuration.
-- **🏢 Enterprise Ready**: Designed for deployment via Microsoft Intune, Group Policy, or other Remote Management and Monitoring (RMM) tools.
-- **📊 Enhanced Registry Tracking**: Stores detailed operational metadata in `HKLM:\SOFTWARE\AutoTimezone` (last IP, detected/set timezones, location, script version, update status, and timestamps).
-- **📝 Detailed Logging**: All actions, decisions, and errors of the `UpdateTimezone.ps1` script are logged to `C:\Scripts\TimezoneUpdate.log`.
-- **🛡️ Robust Error Handling**: Includes mechanisms to handle failures in IP/geolocation lookups and timezone setting, with fallback to `tzutil.exe` if `Set-TimeZone` fails.
-- **👻 Silent Operation**: Runs silently in the background with no user interaction required for `UpdateTimezone.ps1`.
+- **🔧 Conflict Prevention**: Automatically disables Windows location-based timezone detection
+- **🌐 Enhanced DNS Resolution**: Direct resolution using Cloudflare (1.1.1.1, 1.0.0.1) and Google DNS (8.8.8.8, 8.8.4.4)
+- **🔗 Network Connectivity Testing**: Verifies connectivity with DNS fallback before API calls
+- **📡 Multiple IP Detection Sources**: 6 different IP detection services for reliability
+- **🗺️ Multiple Geolocation APIs**: 3 different geolocation providers (ip-api.com, ipapi.co, geoplugin.net)
+- **⚡ Smart Network Monitoring**: Runs on startup, logon, and network profile changes
+- **🗺️ Comprehensive Timezone Mapping**: Supports 50+ major timezones worldwide with IANA conversion
+- **⏰ Scheduled Task Integration**: XML-based task definition with multiple triggers
+- **🏢 Enterprise Ready**: Designed for deployment via Microsoft Intune or other MDM solutions
+- **📊 Enhanced Registry Tracking**: Stores comprehensive metadata and tracking information
+- **📝 Detailed Logging**: Tracks all timezone changes with timestamps and version info
+- **🛡️ Robust Error Handling**: Multiple fallback methods for DNS, IP detection, and timezone setting
+- **👻 No User Interaction**: Runs silently in the background as SYSTEM
+- **🔄 Windows PowerShell 5.1 Compatible**: Works on legacy Windows systems
 
 ## 🚨 Problem Solved
 
-Addresses the common issue where Windows devices incorrectly determine their timezone (e.g., defaulting to "UTC", showing "E. Africa Standard Time" for a US-based location) due to:
-- Inaccurate geolocation data from nearby Wi-Fi access points.
-- Unreliable Windows Location Services for timezone determination.
-- Conflicts between user settings and system attempts to auto-set the timezone.
+**Common Issue**: Windows devices incorrectly detecting timezones (e.g., showing "Africa" instead of "Eastern Time") due to:
+- Rogue access points providing inaccurate geolocation data
+- Flawed Windows built-in geolocation services
+- Inconsistent location services
+- DNS resolution failures preventing accurate IP geolocation
+- Network connectivity issues blocking timezone detection
 
-This solution provides a consistent and predictable timezone by relying on IP-based geolocation and taking control from less reliable native Windows mechanisms.
+**Our Solution**: This script **disables Windows automatic timezone detection** and replaces it with:
+- **Reliable IP-based geolocation** with multiple API sources
+- **Enhanced DNS resolution** using Cloudflare and Google DNS servers
+- **Network connectivity verification** before attempting API calls
+- **Multiple fallback methods** for every critical operation
+- **Comprehensive error handling** ensuring timezone detection works regardless of network conditions
 
-## 🚀 Quick Start / Deployment
+## 🚀 Quick Start
 
-This solution is deployed using a **setup script** (e.g., `Timezone_AutoConfig_Setup_v1.3.ps1` - the script generated in our previous interactions). This setup script performs a one-time installation on each target machine.
+### Option 1: One-Click Setup (Recommended)
 
-### Deployment Steps:
+Run this single command as Administrator to set up everything:
 
-1.  **Obtain the Setup Script:** Use the complete PowerShell script generated previously (which includes the setup logic and the embedded `UpdateTimezone.ps1` content).
-2.  **Deploy the Setup Script:**
-    * **Microsoft Intune (Recommended):**
-        1.  Go to **Devices > Scripts** in the Intune admin center.
-        2.  Click **Add > Windows 10 and later**.
-        3.  Name the script policy (e.g., "Deploy Timezone Auto-Configuration v1.3").
-        4.  Upload the setup script (`Timezone_AutoConfig_Setup_v1.3.ps1`).
-        5.  Configure settings:
-            * Run this script using the logged on credentials: **No** (to run as SYSTEM)
-            * Enforce script signature check: **No** (unless your script is signed and trusted)
-            * Run script in 64-bit PowerShell Host: **Yes**
-        6.  Assign the script policy to your target security group of devices (e.g., "Intune - AutoTimeZone").
-    * **Group Policy:** Deploy the setup script as a computer startup script.
-    * **Other RMM Tools:** Deploy and run the setup script with SYSTEM privileges.
+```powershell
+# Download and run the complete setup script
+Invoke-Expression (Invoke-WebRequest -Uri "https://raw.githubusercontent.com/ghostinator/SysAdminPSSorcery/refs/heads/main/Windows/TimeZoneAuto-Configuration/TimezoneAuto-Configuration.ps1" -UseBasicParsing).Content
+```
 
-### What the Setup Script Does:
-* Creates the `C:\Scripts` directory.
-* Writes the core detection script to `C:\Scripts\UpdateTimezone.ps1` (Version 1.3 logic).
-* Deletes any existing "AutoTimezoneUpdate" scheduled task.
-* Creates the "AutoTimezoneUpdate" scheduled task (triggers on startup, logon, network events; runs as SYSTEM).
-* **Immediately runs the "AutoTimezoneUpdate" task once** to apply the timezone and create initial log/registry entries.
+### Option 2: Manual Installation
 
-## 📁 Installed Components on Target Machine
+1. **Download the setup script**:
+   ```powershell
+   Invoke-WebRequest -Uri "https://raw.githubusercontent.com/ghostinator/SysAdminPSSorcery/refs/heads/main/Windows/TimeZoneAuto-Configuration/TimezoneAuto-Configuration.ps1"
+   ```
 
-* **Main Script:** `C:\Scripts\UpdateTimezone.ps1` (core logic, v1.3)
-* **Log File:** `C:\Scripts\TimezoneUpdate.log` (detailed activity log)
-* **Scheduled Task:** "AutoTimezoneUpdate" (triggers script execution)
-* **Registry Key for Tracking:** `HKLM:\SOFTWARE\AutoTimezone` (stores operational data)
+2. **Run as Administrator**:
+   ```powershell
+   .\Setup-AutoTimezone.ps1
+   ```
 
-## 🔧 System Modifications by `UpdateTimezone.ps1`
+## 📁 What Gets Installed
 
-* **Windows Time Zone Auto Update Service (`tzautoupdate`):** Startup type set to "Disabled" and service stopped.
-* **Location Policy Keys:** Attempts to set `HKLM:\SOFTWARE\Policies\Microsoft\Windows\LocationAndSensors` keys to disable OS location use for timezones.
-* **Location Capability Consent:** `HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location\Value` set to "Deny".
-* **Dynamic DST:** `HKLM:\SYSTEM\CurrentControlSet\Control\TimeZoneInformation\DynamicDaylightTimeDisabled` ensured to be `0` (allowing DST based on zone rules).
+The setup script creates:
+- `C:\Scripts\UpdateTimezone.ps1` - The main timezone detection script (Enhanced v1.7.0 with DNS resolution)
+- `C:\Scripts\TimezoneUpdate.log` - Activity log file with enhanced tracking and DNS resolution details
+- Scheduled Task: "AutoTimezoneUpdate" - Runs on startup, logon, and network profile changes
+- Registry entries: `HKLM:\SOFTWARE\AutoTimezone` - Comprehensive tracking data including DNS resolution status
+- **System Changes**: Disables Windows automatic timezone services and location-based detection
 
-## 🌐 Supported Timezones (Examples in Mapping)
+## 🔧 System Modifications
 
-The `UpdateTimezone.ps1` script contains an extensible mapping table. Key entries include:
+### **Windows Services Disabled**
+- **tzautoupdate service**: Windows automatic timezone detection disabled
+- **Location-based timezone**: Registry settings modified to prevent conflicts
+- **Geolocation services**: Location-based timezone detection disabled
 
-| Region          | IANA Examples                   | Windows Time Zone ID Examples     |
-| :-------------- | :------------------------------ | :-------------------------------- |
-| North America   | `America/New_York`              | `Eastern Standard Time`           |
-|                 | `America/Chicago`               | `Central Standard Time`           |
-|                 | `America/Denver`                | `Mountain Standard Time`          |
-|                 | `America/Phoenix`               | `US Mountain Standard Time`       |
-|                 | `America/Los_Angeles`           | `Pacific Standard Time`           |
-|                 | `America/Indiana/Indianapolis` | `US Eastern Standard Time`        |
-| Europe          | `Europe/London`                 | `GMT Standard Time`               |
-|                 | `Europe/Berlin`                 | `W. Europe Standard Time`         |
-|                 | `Europe/Paris`                  | `Romance Standard Time`           |
-| Asia            | `Asia/Tokyo`                    | `Tokyo Standard Time`             |
-|                 | `Asia/Dubai`                    | `Arabian Standard Time`           |
-| Australia       | `Australia/Sydney`              | `AUS Eastern Standard Time`       |
-| **Default/Fallback** | (If IP/Geo/IANA map fails) | `Eastern Standard Time`           |
+### **Registry Tracking Enhanced (v1.7.0)**
+The script now stores comprehensive tracking information in `HKLM:\SOFTWARE\AutoTimezone`:
+- `LastIANATimezoneDetected` - IANA timezone identifier detected from geolocation
+- `LastWindowsTimezoneSet` - Windows timezone ID that was applied to the system
+- `LastGeolocationInfo` - Complete geographic location string with IP and location details
+- `LastUpdateStatus` - Status message from the last timezone update attempt
+- `LastUpdateTime` - ISO timestamp of last script execution
+- `ScriptVersionRun` - Version tracking for updates and compatibility
 
-*(Refer to the `$timezoneMapping` variable within `UpdateTimezone.ps1` for the full list; this table is illustrative.)*
+## 🏢 Enterprise Deployment
 
-## 📊 How `UpdateTimezone.ps1` Works (Flowchart)
+### Microsoft Intune
+
+1. Navigate to **Devices > Scripts and remediations > Platform scripts**
+2. Click **Add > Windows 10 and later**
+3. Upload the `Setup-AutoTimezone.ps1` script
+4. Configure:
+   - **Run this script using the logged on credentials**: No
+   - **Enforce script signature check**: No
+   - **Run script in 64-bit PowerShell**: Yes
+5. Assign to device groups
+
+### Group Policy
+
+Deploy via Computer Configuration > Policies > Windows Settings > Scripts > Startup
+
+### Other RMM Tools
+
+The script can be deployed through any RMM platform that supports PowerShell script execution with SYSTEM privileges.
+
+## 🌐 Supported Timezones
+
+The script includes comprehensive mapping for major timezones including:
+
+| Region | Supported Timezones |
+|--------|-------------------|
+| **North America** | Eastern, Central, Mountain, Pacific, Alaska, Hawaii |
+| **Europe** | GMT, CET, EET, and all major European zones |
+| **Asia** | Tokyo, Shanghai, Singapore, India, Dubai, and more |
+| **Australia** | All Australian timezone variants |
+| **Others** | South America, Africa, New Zealand |
+
+## 📊 How It Works (v1.7.0 Enhanced)
 
 ```mermaid
 graph TD
-    A["Scheduled Task Triggered <br/>(Startup/Logon/Network Event)"] --> B["Initialize & Start Logging <br/>(to C:\Scripts\TimezoneUpdate.log)"];
-    B --> C{"Attempt to Disable Windows <br/>Auto Timezone Features"};
-    C --> D["Get Public IP Address <br/>(Multiple Services)"];
-    D --"IP Lookup Fails"--> E["Set Target Timezone: <br/>'Eastern Standard Time' <br/>(Log Failure)"];
-    D --"IP Lookup Succeeds"--> F["Get Geolocation Data <br/>(from ip-api.com)"];
-    F --"Geo Lookup Fails <br/>OR No IANA TZ Returned"--> E;
-    F --"Geo Lookup Succeeds"--> G["Extract IANA Timezone String"];
-    G --> H{"Convert IANA to Windows TZ <br/>(Using Internal Mapping Table)"};
-    H --"Mapping Fails <br/>(No Explicit or Approx. Match)"--> E;
-    H --"Mapping Succeeds"--> I["Set Target Timezone: <br/>Mapped Windows TZ <br/>(Log Success)"];
-    E --> J["Attempt to Set System Timezone <br/>to Determined Target"];
-    I --> J;
-    J --> K["Update Registry Tracking Data <br/>(HKLM:\SOFTWARE\AutoTimezone)"];
-    K --> L["Stop Logging & Script Exit"];
-```
-## 🔧 Configuration & Customization (`C:\Scripts\UpdateTimezone.ps1`)
-
-* **IP Detection Services:** Modify the `$uris` array in the `Get-PublicIPAddress` function within `C:\Scripts\UpdateTimezone.ps1` to change or add new public IP lookup endpoints.
-* **Geolocation API:** The `Get-GeoLocationData` function currently uses `http://ip-api.com/json/`. This URL can be modified if you choose to use a different geolocation service (the parsing logic might also need adjustment).
-* **Timezone Mapping:** The `$timezoneMapping` hashtable inside the `Convert-IANAToWindowsTimeZone` function within `C:\Scripts\UpdateTimezone.ps1` is designed to be extensible. You can add more IANA Time Zone strings and their corresponding Windows Time Zone ID pairs as needed.
-* **Fallback Timezone:** The primary fallback timezone (used if IP/geolocation lookup fails, or if an IANA timezone string cannot be mapped by the `Convert-IANAToWindowsTimeZone` function) is set to "Eastern Standard Time". This can be changed in the `Main` function of `C:\Scripts\UpdateTimezone.ps1` (variable `$windowsTimeZoneToSet`) and in the final `else` block of the `Convert-IANAToWindowsTimeZone` function.
-* **Logging:** The `UpdateTimezone.ps1` script uses `Start-Transcript` to log its activity. The log file path is defined as `$LogFile` near the top of `UpdateTimezone.ps1` (and set by the setup script to `C:\Scripts\TimezoneUpdate.log`).
-
-## 📝 Logging Details
-
-All operations of `UpdateTimezone.ps1` are logged with timestamps to `C:\Scripts\TimezoneUpdate.log`. This provides a comprehensive audit trail for troubleshooting.
-
-**Example Log Entries:**
-
-Here's a snippet of what you might find in `C:\Scripts\TimezoneUpdate.log`:
-
-```log
-**********************
-PowerShell transcript start
-Start time: 20250527111500
-Username: NT AUTHORITY\SYSTEM
-RunAs User: NT AUTHORITY\SYSTEM
-Configuration Name:
-Machine: VISTA-LT42 (Microsoft Windows NT 10.0.22631.0)
-Host Application: C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File C:\Scripts\UpdateTimezone.ps1
-Process ID: 5678
-PSVersion: 5.1.22621.2506
-PSEdition: Desktop
-PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.22621.2506
-BuildVersion: 10.0.22621.2506
-CLRVersion: 4.0.30319.42000
-WSManStackVersion: 3.0
-PSRemotingProtocolVersion: 2.3
-SerializationVersion: 1.1.0.1
-**********************
-Transcript started, output file is C:\Scripts\TimezoneUpdate.log
-[2025-05-27 11:15:01] (1.3-ET-Fallback) Script execution started.
-
-=== Automatic Timezone Configuration Script (1.3-ET-Fallback) ===
-
-Step 0: Controlling Windows automatic timezone features...
-Attempting to disable/control Windows automatic timezone features...
-  ✓ Windows Time Zone Auto Update service (tzautoupdate) set to Disabled.
-  ✓ Attempted to disable OS location-based timezone setting via policy keys
-  ✓ Set CapabilityAccessManager\ConsentStore\location to Deny.
-  ✓ DynamicDaylightTimeDisabled is already 0 (DST enabled per zone rules).
-  Finished attempt to disable/control Windows automatic timezone features.
-
-Step 2: Getting public IP address...
-Attempting to get public IP from [https://api.ipify.org/](https://api.ipify.org/)...
-  Public IP Address: 104.18.23.123 (from [https://api.ipify.org/](https://api.ipify.org/))
-  Network change detected (IP: <Previous_IP_or_blank> -> 104.18.23.123). Proceeding with timezone update.
-
-Step 3: Getting geolocation data for IP: 104.18.23.123...
-Querying geolocation API: [http://ip-api.com/json/104.18.23.123](http://ip-api.com/json/104.18.23.123)
-  Location Details (from ip-api.com):
-    City: Los Angeles, Region: California, Country: United States
-    IANA Timezone: America/Los_Angeles
-  Successfully retrieved geolocation: IP: 104.18.23.123, City: Los Angeles, Region: California, Country: United States, IANA TZ: America/Los_Angeles
-
-Step 4: Converting IANA timezone 'America/Los_Angeles' to Windows timezone...
-  Found explicit mapping for IANA 'America/Los_Angeles': 'Pacific Standard Time'
-
-Step 5: Setting system timezone to 'Pacific Standard Time'...
-  Attempting to set timezone from 'US Eastern Standard Time' to 'Pacific Standard Time'...
-  Successfully set timezone to 'Pacific Standard Time'
-  Current local time: 05/27/2025 08:15:10 AM 
-  Updated registry tracking information.
-
-Step 6: Updating registry tracking...
-  Updated registry tracking information.
-
-=== Timezone Configuration Attempt Complete (1.3-ET-Fallback) ===
-[2025-05-27 11:15:12] (1.3-ET-Fallback) Script execution finished. Status: Successfully set timezone to 'Pacific Standard Time'. (IP: 104.18.23.123, City: Los Angeles, Region: California, Country: United States, IANA TZ: America/Los_Angeles)
-**********************
-PowerShell transcript end
-End time: 20250527111512
-**********************
+    A[Script Triggered] --> B[Disable Windows Auto-TZ]
+    B --> C[Test DNS Resolution]
+    C -->|DNS Failed| D[Try Cloudflare DNS 1.1.1.1]
+    D -->|Still Failed| E[Try Google DNS 8.8.8.8]
+    E -->|All DNS Failed| F[Log Error & Exit]
+    C -->|DNS Success| G[Test Network Connectivity]
+    G -->|No Connectivity| H[Try Multiple DNS Servers]
+    H --> I[Get Public IP - Multiple Sources]
+    G -->|Connected| I
+    I -->|IP Failed| J[Log Error & Use Default ET]
+    I -->|IP Success| K[Query Geolocation APIs]
+    K -->|Geo Failed| J
+    K -->|Geo Success| L[Convert IANA to Windows TZ]
+    L --> M[Set System Timezone - Dual Method]
+    M --> N[Update Registry Tracking]
+    N --> O[Log Results with DNS Status]
+    J --> M
 ```
 
-## 🛠️ Troubleshooting and Verification
+## 🔧 Configuration
 
-For detailed steps on verifying the deployment, checking logs, registry keys, scheduled task status, and troubleshooting common issues, please refer to **Section 4 (Verification Procedures)** and **Section 5 (Troubleshooting Guide)** of the comprehensive Knowledge Base Article you have.
+### Triggers (Enhanced v1.7.0)
 
-Key verification commands to run in PowerShell on a target device:
-* **Check current system timezone:**
-    ```powershell
-    Get-TimeZone
-    tzutil /g
-    ```
-* **View recent log entries from `UpdateTimezone.ps1`:**
-    ```powershell
-    Get-Content "C:\Scripts\TimezoneUpdate.log" -Tail 20
-    ```
-* **Search logs for errors or specific successes:**
-    ```powershell
-    Select-String -Path "C:\Scripts\TimezoneUpdate.log" -Pattern "Error|Warning|Failed" -CaseSensitive
-    Select-String -Path "C:\Scripts\TimezoneUpdate.log" -Pattern "Successfully set timezone to"
-    ```
-* **View registry tracking data written by `UpdateTimezone.ps1`:**
-    ```powershell
-    Get-ItemProperty -Path "HKLM:\SOFTWARE\AutoTimezone"
-    ```
-* **Check the status and last run result of the scheduled task:**
-    ```powershell
-    Get-ScheduledTask -TaskName "AutoTimezoneUpdate" | Get-ScheduledTaskInfo
-    ```
+The script runs automatically when:
+- Computer starts up (Boot Trigger)
+- User logs in (Logon Trigger)  
+- Network profile changes detected (Event Trigger - NetworkProfile Event 10000)
+- Manual execution via Task Scheduler
+
+### Enhanced DNS Resolution & Connectivity
+
+The v1.7.0 enhancement includes:
+- **Primary DNS**: System DNS resolution attempt first
+- **Cloudflare DNS**: 1.1.1.1 (primary) and 1.0.0.1 (secondary) fallback
+- **Google DNS**: 8.8.8.8 (primary) and 8.8.4.4 (secondary) fallback  
+- **OpenDNS**: 208.67.222.222 and 208.67.220.220 additional fallback
+- **Network Testing**: Connectivity verification before API calls
+- **Multiple Methods**: Test-NetConnection, Test-Connection, and .NET ping fallbacks
+
+### Customization (v1.7.0)
+
+Edit `C:\Scripts\UpdateTimezone.ps1` to customize:
+- **DNS Servers**: Modify the `$DNSServers` array to add/remove DNS providers
+- **IP Detection APIs**: Update `$ipServices` array with additional IP detection sources
+- **Geolocation APIs**: Modify `$geoServices` array to add more geolocation providers
+- **Timezone Mapping**: Extend the IANA to Windows timezone mapping table
+- **Connectivity Timeouts**: Adjust timeout values for network tests
+- **Logging Verbosity**: Control detail level of DNS resolution and connectivity logging
+
+## 📝 Enhanced Logging (v1.7.0)
+
+All activities are logged to `C:\Scripts\TimezoneUpdate.log` with enhanced DNS resolution detail:
+
+```
+[2025-01-15 10:20:15] (1.7.0-Enhanced-DNS-PS51) Script execution started.
+[2025-01-15 10:20:15] Attempting DNS resolution for: api.ipify.org
+[2025-01-15 10:20:15]   ✓ Resolved via system DNS: 104.16.132.229
+[2025-01-15 10:20:16]   ✓ Network connectivity confirmed to api.ipify.org (104.16.132.229)
+[2025-01-15 10:20:16]   ✓ Public IP Address: 203.0.113.45 (from https://api.ipify.org/)
+[2025-01-15 10:20:17] Testing connectivity to ip-api.com for geolocation...
+[2025-01-15 10:20:17]   ✓ Resolved via Cloudflare DNS 1.1.1.1: 208.95.112.1
+[2025-01-15 10:20:18]   ✓ Location Details (from ip-api.com):
+[2025-01-15 10:20:18]     City: New York, Region: New York, Country: United States
+[2025-01-15 10:20:18]     IANA Timezone: America/New_York
+[2025-01-15 10:20:18]   Found explicit mapping for IANA 'America/New_York': 'Eastern Standard Time'
+[2025-01-15 10:20:19]   Successfully set timezone to 'Eastern Standard Time'
+[2025-01-15 10:20:19] (1.7.0-Enhanced-DNS-PS51) Script execution finished. Status: Successfully set timezone to 'Eastern Standard Time'. (IP: 203.0.113.45, City: New York, Region: New York, Country: United States, IANA TZ: America/New_York)
+```
+
+## 🛠️ Troubleshooting
+
+### Common Issues (v1.7.0)
+
+**Script doesn't run automatically**
+- Verify scheduled task exists: `Get-ScheduledTask -TaskName "AutoTimezoneUpdate"`
+- Check task is enabled and configured to run as SYSTEM- Verify triggers include Boot, Logon, and NetworkProfile events
+**Timezone not detected correctly**
+- Check internet connectivity and DNS resolution
+- Verify multiple geolocation APIs are accessible
+- Review log file for DNS resolution failures
+- Test manual DNS resolution: `nslookup api.ipify.org 1.1.1.1`
+
+**DNS resolution failures**
+- Check if corporate firewall blocks DNS queries to external servers
+- Verify Cloudflare (1.1.1.1) and Google (8.8.8.8) DNS are accessible
+- Review DNS resolution logs in the script output
+- Consider adding internal DNS servers to the fallback list
+
+**Network connectivity issues**
+- Verify outbound HTTPS (443) and HTTP (80) access
+- Check if proxy settings affect script execution
+- Review connectivity test results in log file
+- Test manual connectivity: `Test-NetConnection api.ipify.org -Port 80`
+
+**Windows automatic timezone re-enables**
+- Check if Windows Updates reset the settings
+- Verify registry modifications are persistent
+- Re-run the setup script to re-disable automatic features- Monitor tzautoupdate service status
+**Permission errors**
+- Ensure script runs with administrative privileges
+- Verify SYSTEM account has necessary permissions- Check if antivirus software blocks script execution
+### Enhanced Verification
+
+Check Windows automatic timezone status:
+```powershell
+# Verify Windows automatic timezone is disabled
+Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\tzautoupdate" -Name "Start"
+### Enhanced Verification (v1.7.0)4 (disabled)
+
+# Check registry tracking
+Get-ItemProperty -Path "HKLM:\SOFTWARE\AutoTimezone"
+```Get-Service -Name "tzautoupdate" | Select-Object Name, Status, StartType
+
+# Test DNS resolution manually
+nslookup api.ipify.org 1.1.1.1
+nslookup ip-api.com 8.8.8.8
+
+# Check network connectivity to geolocation services
+Test-NetConnection api.ipify.org -Port 80
+Test-NetConnection ip-api.com -Port 80
+
+# Verify scheduled task configuration
+Get-ScheduledTask -TaskName "AutoTimezoneUpdate" | Select-Object TaskName, State
+(Get-ScheduledTask -TaskName "AutoTimezoneUpdate").Triggers
+
+# Check registry tracking information
+Get-ItemProperty -Path "HKLM:\SOFTWARE\AutoTimezone" -ErrorAction SilentlyContinue
+
+# Test script execution manually
+Start-ScheduledTask -TaskName "AutoTimezoneUpdate"
+
+# Monitor real-time log output
+Get-Content "C:\Scripts\TimezoneUpdate.log" -Tail 20 -Wait
+```
+
+### DNS Resolution Testing
+
+Test the enhanced DNS resolution functionality:
+```powershell
+# Test Cloudflare DNS resolution
+nslookup api.ipify.org 1.1.1.1
+nslookup api.ipify.org 1.0.0.1
+
+# Test Google DNS resolution  
+nslookup api.ipify.org 8.8.8.8
+nslookup api.ipify.org 8.8.4.4
+
+# Test OpenDNS resolution
+nslookup api.ipify.org 208.67.222.222
+nslookup api.ipify.org 208.67.220.220
+```
+### Manual Testing
+
+Test the enhanced script manually:
+```powershell
+# Run the timezone script directly
+C:\Scripts\UpdateTimezone.ps1
+
+# Check current timezone
+Get-TimeZone
+
+# View enhanced registry tracking
+Get-ItemProperty -Path "HKLM:\SOFTWARE\AutoTimezone"
+
+# View recent log entries
+Get-Content C:\Scripts\TimezoneUpdate.log -Tail 10
+```
 
 ## 🔒 Security Considerations
 
-* **SYSTEM Privileges:** The initial setup script requires Administrator rights to create files in `C:\Scripts`, create registry keys under `HKLM`, and create the scheduled task. The `UpdateTimezone.ps1` script itself is executed as `NT AUTHORITY\SYSTEM` via the scheduled task, which is necessary for modifying the system timezone and writing to HKLM registry keys.
-* **External API Calls:** The `UpdateTimezone.ps1` script makes calls to external, third-party services (e.g., `api.ipify.org`, `ipinfo.io/ip`, `http://ip-api.com/`) to determine the public IP address and perform geolocation. Ensure these endpoints are considered trusted within your organization and that outbound connectivity to them (HTTPS/HTTP) is permitted through firewalls or proxies. Note that the free tier of `ip-api.com` uses HTTP.
-* **Script Integrity:** Scripts deployed to endpoints should always come from a trusted internal source or be signed. If deploying via Intune, you can enforce script signature checking if your organization signs its PowerShell scripts.
-* **Logging Data:** The log file (`C:\Scripts\TimezoneUpdate.log`) and registry entries (`HKLM:\SOFTWARE\AutoTimezone`) will contain the device's public IP address and geolocation information. Ensure access to these locations is appropriately controlled if this information is considered sensitive in your environment.
+- Script runs with SYSTEM privileges (required for timezone and registry changes)
+- Uses HTTPS endpoints for IP detection
+- No sensitive data is stored or transmitted
+- All operations are logged for audit purposes
+- **System modifications are tracked** in registry for transparency
+- Network change detection uses local registry storage only
+- **Windows service modifications** are logged and reversible
 
-## ⚠️ Important Notes & Reverting Changes
+## ⚠️ Important Notes
 
-* **Authoritative Control:** This solution is designed to take authoritative control of the system's timezone settings. It actively disables several Windows native automatic timezone features to prevent conflicts.
-* **Reverting to Windows Default Behavior:** To undo the changes made by this solution and revert to standard Windows timezone management:
-    1.  **Delete the Scheduled Task:**
-        ```powershell
-        Unregister-ScheduledTask -TaskName "AutoTimezoneUpdate" -Confirm:$false -ErrorAction SilentlyContinue
-        ```
-    2.  **Re-enable the Windows Time Zone Auto Update Service:**
-        ```powershell
-        Set-Service -Name "tzautoupdate" -StartupType Automatic -ErrorAction SilentlyContinue
-        Start-Service -Name "tzautoupdate" -ErrorAction SilentlyContinue
-        ```
-    3.  **Optional: Remove Script and Registry Data:**
-        ```powershell
-        Remove-Item -Path "C:\Scripts" -Recurse -Force -ErrorAction SilentlyContinue
-        Remove-Item -Path "HKLM:\SOFTWARE\AutoTimezone" -Recurse -Force -ErrorAction SilentlyContinue
-        ```
-    4.  **Optional: Revert Location Policy/Consent (if necessary):**
-        ```powershell
-        Remove-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\LocationAndSensors" -Name "DisableWindowsLocationProvider" -Force -ErrorAction SilentlyContinue
-        Remove-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\LocationAndSensors" -Name "DisableLocation" -Force -ErrorAction SilentlyContinue
-        Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location" -Name "Value" -Value "Allow" -ErrorAction SilentlyContinue
-        ```
-    5.  **Manually adjust settings in Windows:** Go to **Settings > Time & Language > Date & time** and enable "Set time zone automatically" and "Adjust for daylight saving time automatically" if desired.
+### **System Changes**
+This enhanced version makes the following system modifications:
+- **Disables Windows automatic timezone service** (`tzautoupdate`)
+- **Modifies location services registry** settings
+- **Takes control of timezone management** from Windows
+
+### **Reverting Changes**
+To restore Windows automatic timezone functionality:
+```powershell
+# Re-enable Windows automatic timezone
+Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\tzautoupdate" -Name "Start" -Value 3
+
+# Re-enable location services (if desired)
+Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location" -Name "Value" -Value "Allow"
+```
 
 ## 🤝 Contributing
 
-If this were a public project, contributions would be welcome! Potential areas for improvement:
--   Further expansion of the IANA to Windows timezone mapping table in `UpdateTimezone.ps1`.
--   Addition of more IP/geolocation service options with failover logic.
--   More granular error handling and reporting.
--   GUI for viewing logs or status.
+Contributions are welcome! Please feel free to submit:
+- Additional timezone mappings
+- Support for new geolocation APIs
+- Enhanced conflict detection
+- Documentation improvements
+
+### Development Setup
+
+1. Fork the repository
+2. Create a feature branch
+3. Test on multiple Windows versions
+4. Verify Windows service interactions
+5. Submit a pull request
+
+## 🚀 What's New in v1.7.0 - Enhanced DNS Resolution
+
+The latest version includes significant enhancements for network reliability and DNS resolution:
+
+### 🌐 Enhanced DNS Resolution
+- **Cloudflare DNS Integration**: Primary fallback to 1.1.1.1 and 1.0.0.1 for reliable DNS resolution
+- **Google DNS Support**: Secondary fallback to 8.8.8.8 and 8.8.4.4 for maximum compatibility
+- **OpenDNS Fallback**: Additional fallback to 208.67.222.222 and 208.67.220.220
+- **System DNS First**: Always attempts system DNS resolution before fallbacks
+
+### 🔗 Network Connectivity Enhancements
+- **Pre-API Connectivity Testing**: Verifies network connectivity before attempting API calls
+- **Multiple Testing Methods**: Uses Test-NetConnection, Test-Connection, and .NET ping
+- **DNS-Resolved Connectivity**: Tests connectivity to resolved IP addresses, not just hostnames
+- **Timeout Management**: Configurable timeouts for all network operations
+
+### 📡 Multiple Service Providers
+- **6 IP Detection Services**: api.ipify.org, ipinfo.io, icanhazip.com, checkip.amazonaws.com, ip4.seeip.org, myexternalip.com
+- **3 Geolocation APIs**: ip-api.com, ipapi.co, geoplugin.net with different response format handling
+- **Automatic Failover**: Seamlessly switches between providers if one fails
+
+### 🛡️ Enhanced Error Handling
+- **Graceful Degradation**: Falls back to Eastern Time if all geolocation attempts fail
+- **Comprehensive Logging**: Detailed DNS resolution and connectivity status in logs
+- **Windows PowerShell 5.1 Compatible**: Full backward compatibility with legacy systems
+
+### ⚡ Improved Triggers
+- **NetworkProfile Event Trigger**: Automatically runs when network profile changes (Event ID 10000)
+- **Boot and Logon Triggers**: Maintains existing startup and user logon triggers
+- **XML-Based Task Definition**: More reliable scheduled task creation and management
 
 ## 📋 Requirements
 
--   **Operating System**: Windows 10 / Windows 11. PowerShell 5.1 or later should be available.
--   **Permissions**: Administrator rights are required on the target machine to run the initial setup script.
--   **Network Access**: The `UpdateTimezone.ps1` script requires outbound internet connectivity to contact IP detection and geolocation APIs.
--   **PowerShell Execution Policy**: The setup script and scheduled task use `-ExecutionPolicy Bypass` to ensure the `UpdateTimezone.ps1` script can run.
+- **OS**: Windows 10/11 (PowerShell 5.1+)
+- **Permissions**: Administrator rights for initial setup and system modifications
+- **Network**: Internet connectivity for geolocation APIs
+- **Dependencies**: None (uses built-in Windows PowerShell)
 
 ## 🆕 Version History
 
-* **v1.3 (Current - This Version)**
-    * Setup script now **deletes any pre-existing scheduled task** with the same name before creation.
-    * Setup script now **runs the scheduled task immediately** after creation/update.
-    * `UpdateTimezone.ps1`:
-        * Enhanced `Disable-WindowsAutomaticTimezone` for more comprehensive control of native Windows features.
-        * `Get-PublicIPAddress` function uses multiple IP lookup services for improved reliability.
-        * `Convert-IANAToWindowsTimeZone` function:
-            * Internal fallback (if an IANA string is received but cannot be mapped) changed to "Eastern Standard Time".
-            * Explicit mapping for "America/Indiana/Indianapolis" to "US Eastern Standard Time" added.
-            * Generally expanded IANA mapping table.
-        * `Set-SystemTimeZone` function includes a fallback to use `tzutil.exe` if the `Set-TimeZone` cmdlet fails.
-        * Improved logging structure using `Start-Transcript` for better detail in `C:\Scripts\TimezoneUpdate.log`.
-        * Script's overall default target timezone (if IP or geo lookup fails entirely) set to "Eastern Standard Time".
-* **v1.2 (Conceptual based on previous discussion)**
-    * Primary default for `UpdateTimezone.ps1` (if IP/Geo lookup failed) set to "Eastern Standard Time".
-    * `Convert-IANAToWindowsTimeZone` internal fallback (for unmappable IANA strings) also set to "Eastern Standard Time".
-* **v1.1 (User's Initial Script Base)**
-    * Included conflict prevention by disabling some Windows auto-timezone features.
-    * Implemented registry tracking for operational data.
-* **v1.0 (Original Concept)**
-    * Basic IP-based timezone detection.
-    * Network change monitoring.
-    * Scheduled task for automation.
+### **v1.7.0 (Enhanced DNS Resolution) **
+- ✅ **Enhanced DNS Resolution**: Direct resolution using Cloudflare (1.1.1.1, 1.0.0.1) and Google DNS (8.8.8.8, 8.8.4.4)
+- ✅ **Multiple DNS Fallbacks**: OpenDNS (208.67.222.222, 208.67.220.220) additional fallback servers
+- ✅ **Network Connectivity Testing**: Verifies connectivity with DNS resolution before API calls
+- ✅ **Multiple IP Detection Sources**: 6 different IP detection services for maximum reliability
+- ✅ **Multiple Geolocation APIs**: 3 different providers (ip-api.com, ipapi.co, geoplugin.net)
+- ✅ **Enhanced Network Triggers**: Boot, Logon, and NetworkProfile Event 10000 triggers
+- ✅ **Windows PowerShell 5.1 Compatibility**: Full compatibility with legacy Windows systems
+- ✅ **Robust Error Handling**: Multiple fallback methods for DNS, connectivity, and timezone setting
+- ✅ **Enhanced Logging**: Detailed DNS resolution and connectivity status logging
+- ✅ **Dual-Method Timezone Setting**: Set-TimeZone and tzutil.exe fallback methods
+
+### **v1.1 (Enhanced) - Previous**
+- ✅ Disables Windows automatic timezone to prevent conflicts
+- ✅ Enhanced registry tracking with comprehensive metadata
+- ✅ Improved logging with version information
+- ✅ Better conflict prevention and system integration
+- ✅ Validates Windows service modifications
+
+### **v1.0 (Original)**
+- ✅ Basic IP-based timezone detection
+- ✅ Network change monitoring
+- ✅ Scheduled task automation
 
 ## 📄 License
 
-`This project is licensed under the MIT License - see the LICENSE.md file for details.`
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## 🙏 Acknowledgments
 
--   IP & Geolocation API Providers: `ipify.org`, `ipinfo.io`, `icanhazip.com`, `checkip.amazonaws.com`, `ip-api.com`.
--   The Microsoft PowerShell Team for `Set-TimeZone`, `Get-TimeZone`, and other useful cmdlets.
--   The broader Windows Administration and PowerShell communities for shared knowledge and inspiration.
+- [ipify.org](https://www.ipify.org/) for free IP detection API
+- [ip-api.com](http://ip-api.com/) for geolocation services
+- Microsoft PowerShell team for excellent timezone cmdlets
+- Windows administration community for feedback on conflict prevention
+
+## 📞 Support
+
+- **Issues**: [GitHub Issues](https://github.com/ghostinator/SysAdminPSSorcery/issues)
+
 
 ---
 
-⭐ *If this solution helps you effectively manage device timezones and resolve conflicts, consider sharing your feedback or starring the project* ⭐
+⭐ **Star this repository if it helped you solve timezone conflicts!** ⭐
+
+**Made with ❤️ for the Windows administration community**
