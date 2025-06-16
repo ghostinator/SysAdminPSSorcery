@@ -1,6 +1,6 @@
 # /Users/BrandonCook/VPNTroubleshooterGUI.ps1
 # L2TP VPN Troubleshooter
-# Version 0.15 "OMFG MY HEAD HURTS EDITION"
+# Version 0.16 "Event Horizon Edition"
 # Author: Brandon Cook
 
 # Import required assemblies
