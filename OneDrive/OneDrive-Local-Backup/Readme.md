@@ -75,7 +75,7 @@ The script will print its progress as it safely copies your local files to the d
     unstable or broken, and a reliable local backup is needed before a system reset or migration.
 
 .NOTES
-    Author: [Your Name/GitHub Username]
+    Author: ghostinator
     License: MIT
     Version: 1.0
 #>
