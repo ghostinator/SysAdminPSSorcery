@@ -30,7 +30,7 @@ If you find these scripts helpful and would like to support further development 
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details. (Note: You should add a LICENSE file to your repository containing the text of the MIT License).
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Contributions
 
