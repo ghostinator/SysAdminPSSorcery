@@ -77,7 +77,7 @@ For script details, see [OneDriveCompleteRemoval.ps1](OneDriveCompleteRemoval.ps
     `C:\Windows\System32\OneDriveSetup.exe /uninstall`
   - For 32-bit Windows:  
     `C:\Windows\SysWOW64\OneDriveSetup.exe /uninstall`
-- **Note:** This must be run as an administrator[1][2][3].
+- **Note:** This must be run as an administrator.
 
 ### 2. Remove OneDrive from Startup for All Users
 
@@ -87,18 +87,18 @@ For script details, see [OneDriveCompleteRemoval.ps1](OneDriveCompleteRemoval.ps
   - Startup Folders:  
     - `C:\Users\<username>\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\OneDrive.lnk`
     - `C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp\OneDrive.lnk`
-- **How:** Use a PowerShell script to iterate all user profiles and remove these entries[4][5].
+- **How:** Use a PowerShell script to iterate all user profiles and remove these entries.
 
 ### 3. Prevent OneDrive Setup for New Users
 
 - **Why:** By default, new user profiles may auto-install OneDrive.
 - **How:** Remove the `OneDriveSetup` entry from the Default user registry hive:
-  - Load `C:\Users\Default\NTUSER.DAT` and delete the `OneDriveSetup` value from `SOFTWARE\Microsoft\Windows\CurrentVersion\Run`[3].
+  - Load `C:\Users\Default\NTUSER.DAT` and delete the `OneDriveSetup` value from `SOFTWARE\Microsoft\Windows\CurrentVersion\Run`.
 
 ### 4. Remove OneDrive Data and Credentials (Optional)
 
 - **Why:** For privacy or to ensure no residual data remains.
-- **How:** Delete OneDrive folders and cached credentials from each user profile[6][7].
+- **How:** Delete OneDrive folders and cached credentials from each user profile.
 
 ## Sample Scripts
 
