@@ -1,41 +1,46 @@
-#Requires -RunAsAdministrator
-<#
-.SYNOPSIS
-    Complete OneDrive removal script with comprehensive logging
-.DESCRIPTION
-    This script performs all OneDrive removal functions:
-    - Uninstalls OneDrive system-wide
-    - Removes OneDrive from startup for all existing users
-    - Prevents OneDrive setup for new users
-    - Optionally removes OneDrive data and credentials
-.NOTES
-    Must be run as Administrator
-    Designed for deployment via Microsoft Intune or local execution
-#>
+# =================================================================================================================
+# Combined OneDrive Removal Script (Enhanced Logging)
+# Version: 1.3
+# Disclaimer: Use at your own risk. Test before production deployment.
+# =================================================================================================================
 
-[CmdletBinding()]
 param(
-    [switch]$RemoveUserData = $false  # Set to $true to also remove user OneDrive folders
+    [switch]$StopProcesses,
+    [switch]$UninstallOneDrive,
+    [switch]$RemoveStartupEntries,
+    [switch]$RemoveModernApp,
+    [switch]$RemoveUserData,
+    [switch]$RegistryCleanup,
+    [switch]$PreventSetupNewUsers,
+    [switch]$PolicyBlock,
+    [switch]$RestartExplorer
 )
 
-# Configuration
 $ErrorActionPreference = "Continue"
 $LogPath = "$env:TEMP"
-$LogFile = "$LogPath\OneDriveCompleteRemoval_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').log"
+$LogFile = "$LogPath\OneDriveCombinedRemoval_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').log"
 
-# Initialize logging
+# Enhanced logging function with error details
 function Write-Log {
     param(
-        [Parameter(Mandatory = $true)]
         [string]$Message,
-        
-        [Parameter(Mandatory = $false)]
-        [ValidateSet("Info", "Warning", "Error", "Success")]
-        [string]$Level = "Info"
+        [ValidateSet("Info", "Warning", "Error", "Success", "Debug")]
+        [string]$Level = "Info",
+        [System.Management.Automation.ErrorRecord]$ErrorRecord = $null
     )
-    
     $TimeStamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $LogEntry = "[$TimeStamp] [$Level] $Message"
+    
+    # Add detailed error information if provided
+    if ($ErrorRecord) {
+        $LogEntry += "`n    Exception: $($ErrorRecord.Exception.Message)"
+        $LogEntry += "`n    Category: $($ErrorRecord.CategoryInfo.Category)"
+        $LogEntry += "`n    TargetObject: $($ErrorRecord.TargetObject)"
+        $LogEntry += "`n    FullyQualifiedErrorId: $($ErrorRecord.FullyQualifiedErrorId)"
+        if ($ErrorRecord.ScriptStackTrace) {
+            $LogEntry += "`n    StackTrace: $($ErrorRecord.ScriptStackTrace)"
+        }
+    }
     
     # Write to log file
     $LogEntry | Out-File -FilePath $LogFile -Append -Encoding UTF8
@@ -45,227 +50,436 @@ function Write-Log {
         "Error" { Write-Host $Message -ForegroundColor Red }
         "Warning" { Write-Host $Message -ForegroundColor Yellow }
         "Success" { Write-Host $Message -ForegroundColor Green }
+        "Debug" { Write-Host $Message -ForegroundColor Cyan }
         default { Write-Host $Message -ForegroundColor White }
     }
 }
 
+# Function to execute external commands with logging
+function Invoke-CommandWithLogging {
+    param(
+        [string]$Command,
+        [string]$Arguments = "",
+        [string]$Description
+    )
+    
+    Write-Log "Executing: $Command $Arguments" -Level "Debug"
+    try {
+        if ($Arguments) {
+            $result = & $Command $Arguments.Split(' ') 2>&1
+        } else {
+            $result = & $Command 2>&1
+        }
+        
+        if ($LASTEXITCODE -eq 0) {
+            Write-Log "$Description completed successfully" -Level "Success"
+            if ($result) {
+                Write-Log "Output: $result" -Level "Debug"
+            }
+        } else {
+            Write-Log "$Description failed with exit code $LASTEXITCODE" -Level "Error"
+            if ($result) {
+                Write-Log "Error output: $result" -Level "Error"
+            }
+        }
+        return $LASTEXITCODE -eq 0
+    } catch {
+        Write-Log "$Description failed with exception" -Level "Error" -ErrorRecord $_
+        return $false
+    }
+}
+
+# Admin Rights Check
+If (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+    Write-Log "Please run this script as Administrator!" -Level "Error"
+    exit 1
+}
+
+Write-Log "=== OneDrive Combined Removal Script Started ===" -Level "Info"
+Write-Log "Script version: 1.3 (Enhanced Logging)" -Level "Info"
+Write-Log "Current user: $env:USERNAME" -Level "Info"
+Write-Log "Computer name: $env:COMPUTERNAME" -Level "Info"
+Write-Log "Options selected:" -Level "Info"
+Write-Log "  StopProcesses: $StopProcesses" -Level "Info"
+Write-Log "  UninstallOneDrive: $UninstallOneDrive" -Level "Info"
+Write-Log "  RemoveStartupEntries: $RemoveStartupEntries" -Level "Info"
+Write-Log "  RemoveModernApp: $RemoveModernApp" -Level "Info"
+Write-Log "  RemoveUserData: $RemoveUserData" -Level "Info"
+Write-Log "  RegistryCleanup: $RegistryCleanup" -Level "Info"
+Write-Log "  PreventSetupNewUsers: $PreventSetupNewUsers" -Level "Info"
+Write-Log "  PolicyBlock: $PolicyBlock" -Level "Info"
+Write-Log "  RestartExplorer: $RestartExplorer" -Level "Info"
+
 # Statistics tracking
 $Stats = @{
+    ProcessesStopped = 0
     UninstallAttempts = 0
     UninstallSuccesses = 0
-    RegistryEntriesRemoved = 0
-    StartupShortcutsRemoved = 0
-    UserDataFoldersRemoved = 0
     UsersProcessed = 0
-    Errors = 0
+    RegistryEntriesRemoved = 0
+    FoldersRemoved = 0
+    ErrorsEncountered = 0
+    FilesSkipped = 0
 }
 
-Write-Log "=== OneDrive Complete Removal Script Started ===" -Level "Info"
-Write-Log "Remove user  $RemoveUserData" -Level "Info"
-
-# ===== STEP 1: UNINSTALL ONEDRIVE SYSTEM-WIDE =====
-Write-Log "Step 1: Uninstalling OneDrive system-wide..." -Level "Info"
-
-$oneDriveSetupPaths = @(
-    "$env:SystemRoot\System32\OneDriveSetup.exe",
-    "$env:SystemRoot\SysWOW64\OneDriveSetup.exe"
-)
-
-foreach ($setupPath in $oneDriveSetupPaths) {
-    $Stats.UninstallAttempts++
-    Write-Log "Attempting uninstall with: $setupPath" -Level "Info"
-    
-    if (Test-Path $setupPath) {
-        try {
-            Start-Process -FilePath $setupPath -ArgumentList "/uninstall" -Wait -NoNewWindow
-            Write-Log "Successfully executed uninstall command: $setupPath" -Level "Success"
-            $Stats.UninstallSuccesses++
-        } catch {
-            Write-Log "Failed to execute uninstall command: $setupPath - $($_.Exception.Message)" -Level "Error"
-            $Stats.Errors++
-        }
-    } else {
-        Write-Log "OneDrive setup not found at: $setupPath" -Level "Warning"
-    }
-}
-
-# ===== STEP 2: REMOVE ONEDRIVE FROM STARTUP FOR ALL EXISTING USERS =====
-Write-Log "Step 2: Removing OneDrive from startup for all existing users..." -Level "Info"
-
-# Get all user profiles with NTUSER.DAT files (existing users)
-$userProfiles = Get-ChildItem 'C:\Users' -Directory | Where-Object { 
-    Test-Path "$($_.FullName)\NTUSER.DAT" -and 
-    $_.Name -notin @('Default', 'Public', 'All Users', 'Default User')
-}
-
-Write-Log "Found $($userProfiles.Count) user profiles to process" -Level "Info"
-
-foreach ($profile in $userProfiles) {
-    $userName = $profile.Name
-    $userPath = $profile.FullName
-    $Stats.UsersProcessed++
-    Write-Log "Processing user: $userName" -Level "Info"
-    
-    # Remove from Registry (HKCU Run Key)
+# --- 1. Stop OneDrive Processes ---
+if ($StopProcesses) {
+    Write-Log "Terminating all OneDrive processes..." -Level "Info"
     try {
-        $ntUserDat = "$userPath\NTUSER.DAT"
-        $tempHive = "HKU\TempHive_$userName"
-        
-        # Load the user's registry hive
-        $loadResult = reg load $tempHive $ntUserDat 2>&1
-        if ($LASTEXITCODE -eq 0) {
-            Write-Log "Loaded registry hive for $userName" -Level "Info"
-            
-            # Check if OneDrive entry exists in Run key
-            $runKeyPath = "Registry::$tempHive\Software\Microsoft\Windows\CurrentVersion\Run"
-            if (Test-Path $runKeyPath) {
-                $runKey = Get-ItemProperty -Path $runKeyPath -ErrorAction SilentlyContinue
-                if ($runKey -and $runKey.PSObject.Properties.Name -contains "OneDrive") {
-                    Remove-ItemProperty -Path $runKeyPath -Name "OneDrive" -ErrorAction Stop
-                    Write-Log "Removed OneDrive from Run registry key for $userName" -Level "Success"
-                    $Stats.RegistryEntriesRemoved++
-                } else {
-                    Write-Log "OneDrive not found in Run registry key for $userName" -Level "Info"
+        $processes = Get-Process OneDrive -ErrorAction SilentlyContinue
+        if ($processes) {
+            foreach ($proc in $processes) {
+                try {
+                    Write-Log "Stopping OneDrive process (PID: $($proc.Id))" -Level "Debug"
+                    $proc | Stop-Process -Force
+                    $Stats.ProcessesStopped++
+                } catch {
+                    Write-Log "Failed to stop OneDrive process (PID: $($proc.Id))" -Level "Error" -ErrorRecord $_
+                    $Stats.ErrorsEncountered++
                 }
             }
-            
-            # Unload the registry hive
-            reg unload $tempHive | Out-Null
-            Write-Log "Unloaded registry hive for $userName" -Level "Info"
+            Write-Log "Terminated $($Stats.ProcessesStopped) OneDrive processes" -Level "Success"
         } else {
-            Write-Log "Failed to load registry hive for $userName" -Level "Error"
-            $Stats.Errors++
+            Write-Log "No OneDrive processes found running" -Level "Info"
         }
     } catch {
-        Write-Log "Error processing registry for $userName`: $($_.Exception.Message)" -Level "Error"
-        $Stats.Errors++
-        # Attempt to unload hive if it was loaded
-        reg unload $tempHive 2>&1 | Out-Null
-    }
-    
-    # Remove from user's personal startup folder
-    $userStartupFolder = "$userPath\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup"
-    $userOneDriveLnk = Join-Path $userStartupFolder "OneDrive.lnk"
-    
-    if (Test-Path $userOneDriveLnk) {
-        try {
-            Remove-Item $userOneDriveLnk -Force
-            Write-Log "Removed OneDrive shortcut from startup folder for $userName" -Level "Success"
-            $Stats.StartupShortcutsRemoved++
-        } catch {
-            Write-Log "Failed to remove OneDrive shortcut from startup folder for $userName`: $($_.Exception.Message)" -Level "Error"
-            $Stats.Errors++
-        }
-    } else {
-        Write-Log "OneDrive shortcut not found in startup folder for $userName" -Level "Info"
+        Write-Log "Error while checking for OneDrive processes" -Level "Error" -ErrorRecord $_
+        $Stats.ErrorsEncountered++
     }
 }
 
-# Remove from All Users Startup Folder
-$allUsersStartup = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp"
-$allUsersOneDriveLnk = Join-Path $allUsersStartup "OneDrive.lnk"
-
-if (Test-Path $allUsersOneDriveLnk) {
-    try {
-        Remove-Item $allUsersOneDriveLnk -Force
-        Write-Log "Removed OneDrive shortcut from All Users startup folder" -Level "Success"
-        $Stats.StartupShortcutsRemoved++
-    } catch {
-        Write-Log "Failed to remove OneDrive shortcut from All Users startup folder: $($_.Exception.Message)" -Level "Error"
-        $Stats.Errors++
-    }
-} else {
-    Write-Log "OneDrive shortcut not found in All Users startup folder" -Level "Info"
-}
-
-# ===== STEP 3: PREVENT ONEDRIVE SETUP FOR NEW USERS =====
-Write-Log "Step 3: Preventing OneDrive setup for new users..." -Level "Info"
-
-try {
-    $defaultUserHive = "hklm\Default_profile"
-    $defaultUserDat = "C:\Users\Default\NTUSER.DAT"
-    
-    if (Test-Path $defaultUserDat) {
-        # Load default user hive
-        $loadResult = reg load $defaultUserHive $defaultUserDat 2>&1
-        if ($LASTEXITCODE -eq 0) {
-            Write-Log "Loaded Default user registry hive" -Level "Info"
-            
-            # Remove OneDriveSetup from Run key
-            $deleteResult = reg delete "$defaultUserHive\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" /v "OneDriveSetup" /f 2>&1
-            if ($LASTEXITCODE -eq 0) {
-                Write-Log "Removed OneDriveSetup from Default user Run key" -Level "Success"
-                $Stats.RegistryEntriesRemoved++
+# --- 2. Uninstall OneDrive (Legacy/Classic) ---
+if ($UninstallOneDrive) {
+    Write-Log "Uninstalling OneDrive system-wide..." -Level "Info"
+    $setupPaths = @(
+        "$env:SystemRoot\System32\OneDriveSetup.exe",
+        "$env:SystemRoot\SysWOW64\OneDriveSetup.exe"
+    )
+    foreach ($exe in $setupPaths) {
+        $Stats.UninstallAttempts++
+        if (Test-Path $exe) {
+            Write-Log "Found OneDrive setup at: $exe" -Level "Info"
+            if (Invoke-CommandWithLogging -Command $exe -Arguments "/uninstall" -Description "OneDrive uninstall") {
+                $Stats.UninstallSuccesses++
             } else {
-                Write-Log "OneDriveSetup not found in Default user Run key (may already be removed)" -Level "Info"
+                $Stats.ErrorsEncountered++
             }
-            
-            # Unload default user hive
-            reg unload $defaultUserHive | Out-Null
-            Write-Log "Unloaded Default user registry hive" -Level "Info"
         } else {
-            Write-Log "Failed to load Default user registry hive" -Level "Error"
-            $Stats.Errors++
+            Write-Log "OneDrive setup not found at: $exe" -Level "Warning"
         }
-    } else {
-        Write-Log "Default user NTUSER.DAT not found" -Level "Warning"
     }
-} catch {
-    Write-Log "Error preventing OneDrive setup for new users: $($_.Exception.Message)" -Level "Error"
-    $Stats.Errors++
 }
 
-# ===== STEP 4: REMOVE ONEDRIVE DATA AND CREDENTIALS (OPTIONAL) =====
+# --- 3. Remove Modern OneDrive App (Appx) ---
+if ($RemoveModernApp) {
+    Write-Log "Attempting to uninstall the modern OneDrive app..." -Level "Info"
+    try {
+        $modernApp = Get-AppxPackage -AllUsers -Name "Microsoft.OneDriveSync" -ErrorAction SilentlyContinue
+        if ($modernApp) {
+            Write-Log "Found modern OneDrive app: $($modernApp.PackageFullName)" -Level "Info"
+            $modernApp | Remove-AppxPackage -AllUsers -ErrorAction Stop
+            Write-Log "Successfully uninstalled the modern OneDrive app" -Level "Success"
+        } else {
+            Write-Log "Modern OneDrive app not found" -Level "Info"
+        }
+    } catch {
+        Write-Log "Error uninstalling modern OneDrive app" -Level "Error" -ErrorRecord $_
+        $Stats.ErrorsEncountered++
+    }
+}
+
+# --- 4. Remove OneDrive from Startup for All Users ---
+if ($RemoveStartupEntries) {
+    Write-Log "Removing OneDrive from startup for all users..." -Level "Info"
+    $userProfiles = Get-ChildItem 'C:\Users' -Directory | Where-Object {
+        (Test-Path "$($_.FullName)\NTUSER.DAT") -and
+        ($_.Name -notin @('Default', 'Public', 'All Users', 'Default User'))
+    }
+    
+    Write-Log "Found $($userProfiles.Count) user profiles to process" -Level "Info"
+    
+    foreach ($profile in $userProfiles) {
+        $userName = $profile.Name
+        $userPath = $profile.FullName
+        $Stats.UsersProcessed++
+        Write-Log "Processing user: $userName" -Level "Info"
+        
+        # Remove from Registry (HKCU Run Key)
+        try {
+            $ntUserDat = "$userPath\NTUSER.DAT"
+            $tempHive = "HKU\TempHive_$userName"
+            
+            Write-Log "Loading registry hive for $userName" -Level "Debug"
+            $loadResult = Invoke-CommandWithLogging -Command "reg" -Arguments "load `"$tempHive`" `"$ntUserDat`"" -Description "Registry hive load for $userName"
+            
+            if ($loadResult) {
+                $runKeyPath = "Registry::$tempHive\Software\Microsoft\Windows\CurrentVersion\Run"
+                if (Test-Path $runKeyPath) {
+                    $runKey = Get-ItemProperty -Path $runKeyPath -ErrorAction SilentlyContinue
+                    if ($runKey -and $runKey.PSObject.Properties.Name -contains "OneDrive") {
+                        Remove-ItemProperty -Path $runKeyPath -Name "OneDrive" -ErrorAction Stop
+                        Write-Log "Removed OneDrive from Run registry key for $userName" -Level "Success"
+                        $Stats.RegistryEntriesRemoved++
+                    } else {
+                        Write-Log "OneDrive not found in Run registry key for $userName" -Level "Info"
+                    }
+                } else {
+                    Write-Log "Run registry key not found for $userName" -Level "Warning"
+                }
+                
+                Write-Log "Unloading registry hive for $userName" -Level "Debug"
+                Invoke-CommandWithLogging -Command "reg" -Arguments "unload `"$tempHive`"" -Description "Registry hive unload for $userName" | Out-Null
+            } else {
+                $Stats.ErrorsEncountered++
+            }
+        } catch {
+            Write-Log "Error processing registry for $userName" -Level "Error" -ErrorRecord $_
+            $Stats.ErrorsEncountered++
+            # Attempt cleanup
+            try { reg unload $tempHive 2>&1 | Out-Null } catch { }
+        }
+        
+        # Remove from user's startup folder
+        $startupFolder = "$userPath\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup"
+        $oneDriveLnk = Join-Path $startupFolder "OneDrive.lnk"
+        
+        if (Test-Path $oneDriveLnk) {
+            try {
+                Remove-Item $oneDriveLnk -Force -ErrorAction Stop
+                Write-Log "Removed OneDrive shortcut from startup folder for $userName" -Level "Success"
+                $Stats.FoldersRemoved++
+            } catch {
+                Write-Log "Failed to remove OneDrive shortcut for $userName" -Level "Error" -ErrorRecord $_
+                $Stats.ErrorsEncountered++
+            }
+        } else {
+            Write-Log "OneDrive shortcut not found in startup folder for $userName" -Level "Info"
+        }
+    }
+    
+    # Remove from All Users Startup folder
+    $allUsersStartup = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp\OneDrive.lnk"
+    if (Test-Path $allUsersStartup) {
+        try {
+            Remove-Item $allUsersStartup -Force -ErrorAction Stop
+            Write-Log "Removed OneDrive shortcut from All Users startup folder" -Level "Success"
+            $Stats.FoldersRemoved++
+        } catch {
+            Write-Log "Failed to remove OneDrive shortcut from All Users startup folder" -Level "Error" -ErrorRecord $_
+            $Stats.ErrorsEncountered++
+        }
+    } else {
+        Write-Log "OneDrive shortcut not found in All Users startup folder" -Level "Info"
+    }
+}
+
+# --- 5. Remove OneDrive Data and Credentials ---
 if ($RemoveUserData) {
-    Write-Log "Step 4: Removing OneDrive data and credentials..." -Level "Info"
+    Write-Log "Removing OneDrive data and credentials for all users..." -Level "Info"
+    $userProfiles = Get-ChildItem 'C:\Users' -Directory | Where-Object { 
+        $_.Name -notin @('Default', 'Public', 'All Users', 'Default User')
+    }
     
     foreach ($profile in $userProfiles) {
         $userName = $profile.Name
         $userPath = $profile.FullName
         Write-Log "Removing OneDrive data for user: $userName" -Level "Info"
         
-        $oneDriveFolders = @(
+        $folders = @(
             "$userPath\OneDrive",
             "$userPath\AppData\Local\Microsoft\OneDrive",
             "$userPath\AppData\Roaming\Microsoft\OneDrive"
         )
         
-        foreach ($folder in $oneDriveFolders) {
+        foreach ($folder in $folders) {
             if (Test-Path $folder) {
                 try {
-                    Remove-Item $folder -Recurse -Force
-                    Write-Log "Removed OneDrive folder: $folder" -Level "Success"
-                    $Stats.UserDataFoldersRemoved++
+                    # Get folder size for logging
+                    $folderSize = (Get-ChildItem $folder -Recurse -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
+                    $folderSizeMB = [math]::Round($folderSize / 1MB, 2)
+                    
+                    Remove-Item $folder -Recurse -Force -ErrorAction Stop
+                    Write-Log "Removed OneDrive folder: $folder (Size: $folderSizeMB MB)" -Level "Success"
+                    $Stats.FoldersRemoved++
                 } catch {
-                    Write-Log "Failed to remove OneDrive folder: $folder - $($_.Exception.Message)" -Level "Error"
-                    $Stats.Errors++
+                    Write-Log "Failed to remove OneDrive folder: $folder" -Level "Error" -ErrorRecord $_
+                    $Stats.ErrorsEncountered++
+                    
+                    # Try to identify locked files
+                    try {
+                        $lockedFiles = Get-ChildItem $folder -Recurse -ErrorAction SilentlyContinue | Where-Object {
+                            try {
+                                [System.IO.File]::OpenWrite($_.FullName).Close()
+                                $false
+                            } catch {
+                                $true
+                            }
+                        }
+                        if ($lockedFiles) {
+                            Write-Log "Locked files preventing removal:" -Level "Warning"
+                            foreach ($file in $lockedFiles) {
+                                Write-Log "  - $($file.FullName)" -Level "Warning"
+                                $Stats.FilesSkipped++
+                            }
+                        }
+                    } catch {
+                        Write-Log "Could not enumerate locked files in $folder" -Level "Warning"
+                    }
                 }
             } else {
                 Write-Log "OneDrive folder not found: $folder" -Level "Info"
             }
         }
     }
-} else {
-    Write-Log "Step 4: Skipping OneDrive data removal (RemoveUserData = false)" -Level "Info"
+    
+    # Remove system-level folders
+    $systemFolders = @("C:\ProgramData\Microsoft OneDrive", "C:\OneDriveTemp")
+    foreach ($sysFolder in $systemFolders) {
+        if (Test-Path $sysFolder) {
+            try {
+                Remove-Item $sysFolder -Recurse -Force -ErrorAction Stop
+                Write-Log "Removed system OneDrive folder: $sysFolder" -Level "Success"
+                $Stats.FoldersRemoved++
+            } catch {
+                Write-Log "Failed to remove system OneDrive folder: $sysFolder" -Level "Error" -ErrorRecord $_
+                $Stats.ErrorsEncountered++
+            }
+        } else {
+            Write-Log "System OneDrive folder not found: $sysFolder" -Level "Info"
+        }
+    }
 }
 
-# ===== FINAL SUMMARY =====
-Write-Log "=== OneDrive Complete Removal Script Completed ===" -Level "Info"
-Write-Log "SUMMARY STATISTICS:" -Level "Info"
-Write-Log "- Uninstall attempts: $($Stats.UninstallAttempts)" -Level "Info"
-Write-Log "- Uninstall successes: $($Stats.UninstallSuccesses)" -Level "Info"
-Write-Log "- Registry entries removed: $($Stats.RegistryEntriesRemoved)" -Level "Info"
-Write-Log "- Startup shortcuts removed: $($Stats.StartupShortcutsRemoved)" -Level "Info"
-Write-Log "- User data folders removed: $($Stats.UserDataFoldersRemoved)" -Level "Info"
-Write-Log "- Users processed: $($Stats.UsersProcessed)" -Level "Info"
-Write-Log "- Errors encountered: $($Stats.Errors)" -Level "Info"
+# --- 6. Registry Cleanup (Navigation Pane, Deep Clean) ---
+if ($RegistryCleanup) {
+    Write-Log "Scrubbing the registry of OneDrive entries..." -Level "Info"
+    
+    $navPaneKeys = @(
+        "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{018D5C66-4533-4307-9B53-224DE2ED1FE6}",
+        "HKCU:\Software\Classes\CLSID\{018D5C66-4533-4307-9B53-224DE2ED1FE6}",
+        "HKCU:\Software\Classes\Wow6432Node\CLSID\{018D5C66-4533-4307-9B53-224DE2ED1FE6}"
+    )
+    
+    foreach ($key in $navPaneKeys) {
+        if (Test-Path $key) {
+            try {
+                Remove-Item -Path $key -Recurse -Force -ErrorAction Stop
+                Write-Log "Removed registry key: $key" -Level "Success"
+                $Stats.RegistryEntriesRemoved++
+            } catch {
+                Write-Log "Failed to remove registry key: $key" -Level "Error" -ErrorRecord $_
+                $Stats.ErrorsEncountered++
+            }
+        } else {
+            Write-Log "Registry key not found: $key" -Level "Info"
+        }
+    }
+    
+    $pathsToClean = @(
+        "HKLM:\SOFTWARE\Policies\Microsoft\Windows\OneDrive",
+        "HKCU:\Software\Microsoft\OneDrive",
+        "HKLM:\SOFTWARE\Microsoft\OneDrive"
+    )
+    
+    foreach ($path in $pathsToClean) {
+        if (Test-Path $path) {
+            try {
+                Remove-Item -Path $path -Recurse -Force -ErrorAction Stop
+                Write-Log "Removed registry path: $path" -Level "Success"
+                $Stats.RegistryEntriesRemoved++
+            } catch {
+                Write-Log "Failed to remove registry path: $path" -Level "Error" -ErrorRecord $_
+                $Stats.ErrorsEncountered++
+            }
+        } else {
+            Write-Log "Registry path not found: $path" -Level "Info"
+        }
+    }
+}
+
+# --- 7. Prevent OneDrive Setup for New Users ---
+if ($PreventSetupNewUsers) {
+    Write-Log "Preventing OneDrive setup for new users..." -Level "Info"
+    $defaultUserHive = "hklm\Default_profile"
+    $defaultUserDat = "C:\Users\Default\NTUSER.DAT"
+    
+    if (Test-Path $defaultUserDat) {
+        if (Invoke-CommandWithLogging -Command "reg" -Arguments "load `"$defaultUserHive`" `"$defaultUserDat`"" -Description "Load Default user hive") {
+            if (Invoke-CommandWithLogging -Command "reg" -Arguments "delete `"$defaultUserHive\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`" /v `"OneDriveSetup`" /f" -Description "Remove OneDriveSetup from Default user") {
+                $Stats.RegistryEntriesRemoved++
+            } else {
+                $Stats.ErrorsEncountered++
+            }
+            Invoke-CommandWithLogging -Command "reg" -Arguments "unload `"$defaultUserHive`"" -Description "Unload Default user hive" | Out-Null
+        } else {
+            $Stats.ErrorsEncountered++
+        }
+    } else {
+        Write-Log "Default user NTUSER.DAT not found at: $defaultUserDat" -Level "Warning"
+    }
+}
+
+# --- 8. Policy Block (Prevent Reinstallation/Usage) ---
+if ($PolicyBlock) {
+    Write-Log "Applying registry policy to disable OneDrive file sync..." -Level "Info"
+    $policyRegPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\OneDrive"
+    
+    try {
+        if (-not (Test-Path $policyRegPath)) {
+            New-Item -Path $policyRegPath -Force -ErrorAction Stop | Out-Null
+            Write-Log "Created policy registry path: $policyRegPath" -Level "Success"
+        }
+        
+        Set-ItemProperty -Path $policyRegPath -Name "DisableFileSyncNGSC" -Value 1 -Type DWord -Force -ErrorAction Stop
+        Write-Log "Set registry policy to disable OneDrive file sync" -Level "Success"
+        $Stats.RegistryEntriesRemoved++
+    } catch {
+        Write-Log "Failed to set policy registry value" -Level "Error" -ErrorRecord $_
+        $Stats.ErrorsEncountered++
+    }
+}
+
+# --- 9. Restart Explorer ---
+if ($RestartExplorer) {
+    Write-Log "Restarting Windows Explorer to apply changes..." -Level "Info"
+    try {
+        $explorerProcesses = Get-Process explorer -ErrorAction SilentlyContinue
+        if ($explorerProcesses) {
+            $explorerProcesses | Stop-Process -Force -ErrorAction Stop
+            Write-Log "Stopped Explorer processes" -Level "Success"
+        }
+        
+        Start-Sleep -Seconds 2
+        Start-Process -FilePath "explorer.exe" -ErrorAction Stop
+        Write-Log "Windows Explorer restarted" -Level "Success"
+    } catch {
+        Write-Log "Failed to restart Explorer" -Level "Error" -ErrorRecord $_
+        $Stats.ErrorsEncountered++
+    }
+}
+
+# Final Summary
+Write-Log "==========================================================" -Level "Info"
+Write-Log "OneDrive combined removal script has completed" -Level "Success"
+Write-Log "EXECUTION STATISTICS:" -Level "Info"
+Write-Log "  Processes stopped: $($Stats.ProcessesStopped)" -Level "Info"
+Write-Log "  Uninstall attempts: $($Stats.UninstallAttempts)" -Level "Info"
+Write-Log "  Uninstall successes: $($Stats.UninstallSuccesses)" -Level "Info"
+Write-Log "  Users processed: $($Stats.UsersProcessed)" -Level "Info"
+Write-Log "  Registry entries removed: $($Stats.RegistryEntriesRemoved)" -Level "Info"
+Write-Log "  Folders removed: $($Stats.FoldersRemoved)" -Level "Info"
+Write-Log "  Files skipped (locked): $($Stats.FilesSkipped)" -Level "Info"
+Write-Log "  Errors encountered: $($Stats.ErrorsEncountered)" -Level "Info"
+
+if ($Stats.ErrorsEncountered -gt 0) {
+    Write-Log "Script completed with $($Stats.ErrorsEncountered) errors - review log for details" -Level "Warning"
+} else {
+    Write-Log "Script completed successfully with no errors" -Level "Success"
+}
+
+Write-Log "A system restart is recommended to finalize all changes" -Level "Warning"
+Write-Log "==========================================================" -Level "Info"
 Write-Log "Log file saved to: $LogFile" -Level "Info"
 
 # Exit with appropriate code
-if ($Stats.Errors -eq 0) {
-    Write-Log "Script completed successfully with no errors" -Level "Success"
-    exit 0
-} else {
-    Write-Log "Script completed with $($Stats.Errors) errors - check log for details" -Level "Warning"
-    exit 1
-}
+exit $(if ($Stats.ErrorsEncountered -gt 0) { 1 } else { 0 })
