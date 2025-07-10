@@ -19,7 +19,7 @@ $ProgressPreference = "SilentlyContinue"
 
 # Initialize logging
 $LogDate = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
-$LogPath = "C;\temp"
+$LogPath = "C:\temp"
 $LogFile = "$LogPath\DropboxSaveLocation_$LogDate.log"
 
 # Ensure log directory exists
