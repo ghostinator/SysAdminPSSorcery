@@ -4,10 +4,15 @@ Welcome to SysAdminPSSorcery, a collection of PowerShell scripts crafted by Bran
 
 The scripts within this collection currently cover several key areas of system administration, including:
 
-* **Azure:** Scripts for managing resources and services within the Microsoft Azure cloud platform.
-* **Exchange Online:** Utilities for administering Exchange Online environments, including mailbox management, user provisioning, and configuration tasks.
-* **Networking:** Scripts focused on network-related operations, potentially covering tasks like configuration, monitoring, and troubleshooting.
-* **SharePoint:** Tools for managing SharePoint Online or on-premises environments.
+  * **365 Apps:** Utilities for managing and configuring Microsoft 365 applications on client machines.
+  * **Azure:** Scripts for managing resources and services within the Microsoft Azure cloud platform.
+  * **EntraID:** Tools specifically for managing Microsoft Entra ID users and objects.
+  * **ExchangeOnline:** Utilities for administering Exchange Online environments, including mailbox management, user provisioning, and configuration tasks.
+  * **Networking:** Scripts focused on network-related operations, potentially covering tasks like configuration, monitoring, and troubleshooting.
+  * **OneDrive:** A collection of scripts designed to manage, clean up, or back up OneDrive installations and data on local machines.
+  * **SharePoint:** Tools for managing SharePoint Online or on-premises environments, focusing on data migration and access.
+  * **Teams:** Scripts and tools tailored for the administration and management of Microsoft Teams.
+  * **Windows:** A suite of scripts for advanced configuration, management, and troubleshooting of Windows client and server operating systems.
 
 These scripts are provided to help fellow system administrators in their day-to-day tasks. While efforts are made to ensure their effectiveness, always test scripts in a non-production environment before implementing them widely.
 
