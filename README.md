@@ -22,6 +22,7 @@ Feel free to reach out to me at the email address above if you have any script r
 
 If you find these scripts helpful and would like to support further development or simply show your appreciation, you can use the following donation addresses:
 
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/H2H25YLCS)
 * **PayPal:** brandon@ghostinator.co
 * **SOL:** AUyf3DxRL9uKWf7ePEjY5GhSL3XJtAqQZ2w7kUMLi1xS
 * **ETH, Monad, Base, Polygon:** 0x521E4D25212180B5f8A9f0261D00835EA3bd7fa6
