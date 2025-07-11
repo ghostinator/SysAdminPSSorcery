@@ -5,7 +5,7 @@ This repository provides scripts and instructions for **completely removing Micr
 ## Table of Contents
 
 - [Overview](#overview)
-- [OneDrive Complete Removal Script (All Actions Enabled by Default)](#OneDrive-Complete-Removal-Script-(All-Actions-Enabled-by-Default))
+- [OneDrive Complete Removal Script (All Actions Enabled by Default)](#onedrive-complete-removal-script-all-actions-enabled-by-default)
 - [Removal Options](#removal-options)
   - [1. Uninstall OneDrive System-Wide](#1-uninstall-onedrive-system-wide)
   - [2. Remove OneDrive from Startup for All Users](#2-remove-onedrive-from-startup-for-all-users)
