@@ -428,4 +428,13 @@ Write-Log "A system restart is recommended to finalize all changes" -Level "Warn
 Write-Log "==========================================================" -Level "Info"
 Write-Log "Log file saved to: $LogFile" -Level "Info"
 
+if ($Stats.ErrorsEncountered -gt 0) {
+    Write-Output "OneDrive removal completed with errors. See log: $LogFile"
+    exit 1
+} else {
+    Write-Output "OneDrive removal completed successfully. See log: $LogFile"
+    exit 0
+}
+
+
 exit $(if ($Stats.ErrorsEncountered -gt 0) { 1 } else { 0 })
