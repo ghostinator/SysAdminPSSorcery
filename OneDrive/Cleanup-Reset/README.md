@@ -5,7 +5,7 @@ This repository provides scripts and instructions for **completely removing Micr
 ## Table of Contents
 
 - [Overview](#overview)
-- [Complete OneDrive Removal Script with Logging](#complete-onedrive-removal-script-with-logging)
+- [OneDrive Complete Removal Script (All Actions Enabled by Default)](#OneDrive-Complete-Removal-Script-(All-Actions-Enabled-by-Default))
 - [Removal Options](#removal-options)
   - [1. Uninstall OneDrive System-Wide](#1-uninstall-onedrive-system-wide)
   - [2. Remove OneDrive from Startup for All Users](#2-remove-onedrive-from-startup-for-all-users)
@@ -20,166 +20,98 @@ This repository provides scripts and instructions for **completely removing Micr
 Microsoft OneDrive is integrated into Windows 10 and 11, but many organizations and users prefer to remove it for privacy, compliance, or workflow reasons. This guide covers all major removal and cleanup options, with sample PowerShell scripts for automation.
 
 
-# Complete OneDrive Removal Script with Logging
+# OneDrive Complete Removal Script (All Actions Enabled by Default)
 
 ## Overview
 
-This PowerShell script provides **comprehensive OneDrive removal** capabilities for Windows systems with **enhanced logging and error tracking**. The script is modular, allowing administrators to select specific removal actions via command-line switches, making it ideal for both manual execution and enterprise deployment via Microsoft Intune.
+This PowerShell script provides a **comprehensive, modular, and enterprise-ready solution** for removing Microsoft OneDrive from Windows systems. All removal and cleanup actions are enabled by default, and every step is logged in detail for auditing and troubleshooting. The script is suitable for manual use, remote execution, and deployment via Microsoft Intune or other management tools.
 
-## Key Features
+## Features
 
-### **Modular Design**
-- **Selectable actions** via command-line switches - run only what you need
-- **Comprehensive coverage** of all OneDrive components and integration points
-- **Enterprise-ready** with proper exit codes and detailed logging
+- **All actions enabled by default**—no arguments required for full removal.
+- **Modular switches**—override any action by passing the switch as `$false`.
+- **Enhanced logging**—all operations, errors, and warnings are logged to a timestamped file in the system temp directory.
+- **Enterprise-ready**—handles all user profiles, system-wide registry, and policy enforcement.
+- **Safe and robust**—detailed error handling, file lock detection, and statistics reporting.
 
-### **Enhanced Logging & Error Tracking**
-- **Complete error capture** - all errors, warnings, and operations logged to file
-- **Detailed error information** including exception details, stack traces, and affected files
-- **File lock detection** - identifies which specific files cannot be deleted and why
-- **Statistics tracking** - comprehensive reporting of all operations performed
-- **Debug-level logging** for troubleshooting complex issues
+## Actions Performed
 
-### **Comprehensive Removal Options**
-- **Process termination** - Stops all running OneDrive processes
-- **Application uninstall** - Removes both legacy and modern OneDrive applications
-- **Startup cleanup** - Removes OneDrive from all user startup locations
-- **Data removal** - Deletes OneDrive folders and cached credentials
-- **Registry cleanup** - Removes OneDrive integration from Windows Explorer
-- **Policy enforcement** - Prevents OneDrive reinstallation and usage
-- **New user prevention** - Blocks OneDrive setup for future user accounts
+| Action                       | Description                                                                                 | Switch (default: enabled)      |
+|------------------------------|--------------------------------------------------------------------------------------------|-------------------------------|
+| Stop OneDrive Processes      | Terminates all running OneDrive processes                                                  | `-StopProcesses`              |
+| Uninstall OneDrive           | Removes OneDrive using system uninstallers (classic/legacy)                                | `-UninstallOneDrive`          |
+| Remove Modern App            | Uninstalls the OneDrive Appx package (if present)                                          | `-RemoveModernApp`            |
+| Remove Startup Entries       | Removes OneDrive from all user and system startup locations                                | `-RemoveStartupEntries`       |
+| Remove User Data             | Deletes OneDrive folders and cached credentials for all users and system locations         | `-RemoveUserData`             |
+| Registry Cleanup             | Removes OneDrive integration from Windows Explorer and related registry keys               | `-RegistryCleanup`            |
+| Prevent Setup for New Users  | Blocks OneDrive setup for new user accounts by cleaning the Default user registry hive     | `-PreventSetupNewUsers`       |
+| Policy Block                 | Sets registry policy to block OneDrive reinstallation and usage                            | `-PolicyBlock`                |
+| Restart Explorer             | Restarts Windows Explorer to apply changes (can be skipped for non-disruptive remote use)  | `-RestartExplorer`            |
 
-## Available Actions
+## Usage
 
-| Switch | Action | Description |
-|--------|--------|-------------|
-| `-StopProcesses` | Stop OneDrive Processes | Terminates all running OneDrive processes |
-| `-UninstallOneDrive` | Uninstall Application | Removes OneDrive using system uninstallers |
-| `-RemoveStartupEntries` | Startup Cleanup | Removes OneDrive from all user startup locations |
-| `-RemoveModernApp` | Modern App Removal | Uninstalls OneDrive Appx package if present |
-| `-RemoveUserData` | Data Removal | Deletes OneDrive folders and cached data |
-| `-RegistryCleanup` | Registry Cleanup | Removes OneDrive from Windows Explorer integration |
-| `-PreventSetupNewUsers` | Block New Users | Prevents OneDrive setup for new user accounts |
-| `-PolicyBlock` | Policy Enforcement | Sets registry policy to block OneDrive usage |
-| `-RestartExplorer` | Explorer Restart | Restarts Windows Explorer to apply changes |
-
-## Usage Examples
-
-### **Complete Removal (All Actions)**
+### **Run All Actions (Default)**
 ```powershell
-.\OneDriveCompleteRemoval.ps1 -StopProcesses -UninstallOneDrive -RemoveStartupEntries -RemoveModernApp -RemoveUserData -RegistryCleanup -PreventSetupNewUsers -PolicyBlock -RestartExplorer
+.\OneDriveCompleteRemoval.ps1
 ```
 
-### **Basic Cleanup (No Data Removal)**
+### **Skip Any Action**
+To skip an action, pass the switch as `$false`:
 ```powershell
-.\OneDriveCompleteRemoval.ps1 -StopProcesses -UninstallOneDrive -RemoveStartupEntries -PolicyBlock
+.\OneDriveCompleteRemoval.ps1 -RestartExplorer:$false
 ```
+You can combine multiple overrides as needed.
 
-### **Startup Cleanup Only**
-```powershell
-.\OneDriveCompleteRemoval.ps1 -RemoveStartupEntries
-```
+## Logging & Reporting
 
-### **Policy Block Only**
-```powershell
-.\OneDriveCompleteRemoval.ps1 -PolicyBlock
-```
+- **Log file location:**  
+  `%TEMP%\OneDriveCombinedRemoval_YYYY-MM-DD_HH-mm-ss.log`
+- **Log contents:**  
+  - All actions, errors, warnings, and debug information
+  - Exception details, stack traces, and locked file lists
+  - Summary statistics for all operations
 
-## Remote Execution Considerations
+- **Exit codes:**  
+  - `0` = Success (no errors)
+  - `1` = Errors encountered (see log for details)
 
-### **User Interruption**
-When running this script remotely (via Intune, RMM tools, or remote PowerShell), **most actions will not interrupt the user's current session**:
+## Remote Execution & User Experience
 
-- **Process termination** may briefly affect users actively using OneDrive
-- **Registry changes** apply immediately but don't disrupt current applications
-- **File/folder removal** operates in the background
-- **Explorer restart** (`-RestartExplorer`) **will briefly interrupt the user** by restarting Windows Explorer
-
-### **Recommendations for Remote Deployment**
-- **Exclude `-RestartExplorer`** for non-disruptive remote execution
-- **Schedule during maintenance windows** if using `-RestartExplorer`
-- **Use `-StopProcesses`** to minimize file lock issues
-- **Monitor via logs** rather than console output for remote execution
-
-### **Non-Disruptive Remote Command**
-```powershell
-.\OneDriveCompleteRemoval.ps1 -StopProcesses -UninstallOneDrive -RemoveStartupEntries -RemoveModernApp -RemoveUserData -RegistryCleanup -PreventSetupNewUsers -PolicyBlock
-```
-*Note: Excludes `-RestartExplorer` to avoid user interruption*
+- **Non-disruptive by default** (except for `-RestartExplorer`, which restarts Windows Explorer and may briefly interrupt the user).
+- **Recommended for remote/Intune use:**  
+  Omit `-RestartExplorer` for a seamless user experience.
+- **All other actions** run in the background and do not require user interaction.
 
 ## System Requirements
 
-- **Windows 10/11** (tested on current versions)
-- **Administrator privileges** (required for all operations)
+- **Windows 10/11**
 - **PowerShell 5.1 or later**
+- **Administrator privileges**
 
-## Deployment Methods
+## Best Practices
 
-### **Microsoft Intune**
-1. Upload script to **Devices > Scripts and remediations > Platform scripts**
-2. Configure to **run as Administrator** (device context)
-3. Set **Run script in 64-bit PowerShell host**: Yes
-4. Assign to target device groups
-5. Monitor deployment status via exit codes
+- **Test in a non-production environment** before wide deployment.
+- **Review the log file** after execution for any errors or locked files.
+- **Schedule during maintenance windows** if using `-RestartExplorer`.
+- **Combine with Group Policy** for additional OneDrive restrictions if needed.
 
-### **Manual Execution**
-1. Run PowerShell as Administrator
-2. Execute with desired switches
-3. Review log file for detailed results
+## Example: Intune Deployment
 
-### **Remote Management Tools**
-- Compatible with most RMM platforms
-- Use device/system context for full functionality
-- Monitor via log files rather than console output
-
-## Logging and Troubleshooting
-
-### **Log File Location**
-- **Path**: `%TEMP%\OneDriveCombinedRemoval_YYYY-MM-DD_HH-mm-ss.log`
-- **Content**: Complete operation log with timestamps, error details, and statistics
-- **Format**: Human-readable text with structured entries
-
-### **Log Information Includes**
-- **Detailed error messages** with exception information
-- **File lock detection** and affected file lists
-- **Registry operation results** with specific keys/values
-- **Process termination details** with PIDs
-- **Folder sizes** before deletion
-- **Complete statistics** of all operations performed
-
-### **Exit Codes**
-- **0**: Success (no errors encountered)
-- **1**: Failure (errors occurred - check log for details)
+1. Upload the script to Intune as a device-context PowerShell script.
+2. Assign to target device groups.
+3. Monitor deployment status via exit codes and log files.
 
 ## Important Notes
 
-### **Data Safety**
-- **`-RemoveUserData` permanently deletes OneDrive folders** - use with caution
-- **Always test in non-production environment** before wide deployment
-- **Review log files** for any unexpected errors or locked files
+- **`-RemoveUserData` permanently deletes OneDrive folders and cached data.**
+- **Some files may remain if locked by other processes.** The script logs all such files for manual follow-up.
+- **A system restart is recommended** after running the script to finalize all changes.
 
-### **Enterprise Considerations**
-- **Combines well with Group Policy** for additional OneDrive restrictions
-- **Compatible with Windows Update policies** and other system management
-- **Supports both domain-joined and Azure AD-joined devices**
+## Support
 
-### **Limitations**
-- **Some files may remain locked** if OneDrive processes cannot be terminated
-- **Registry changes may require reboot** for complete effect
-- **New OneDrive installations** may override some settings if not blocked by policy
+For troubleshooting, review the generated log file for detailed error and operation information.  
+If you encounter persistent issues, ensure the script is run as Administrator and that all OneDrive processes are stopped before data removal.
 
-## Support and Troubleshooting
-
-### **Common Issues**
-- **Access denied errors**: Ensure script runs as Administrator
-- **File lock errors**: Stop all OneDrive processes before data removal
-- **Registry errors**: Check for existing Group Policy conflicts
-
-### **Best Practices**
-- **Run complete removal** during maintenance windows
-- **Test on pilot group** before organization-wide deployment
-- **Keep log files** for compliance and troubleshooting
-- **Combine with policy enforcement** for permanent OneDrive blocking
 
 
 ## Manual Removal Options
