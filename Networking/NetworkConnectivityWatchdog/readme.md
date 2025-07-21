@@ -1,7 +1,8 @@
 
 # Network Connectivity Watchdog
 
-![Screenshot of terminal output](image.png)
+<img width="962" height="512" alt="image" src="https://github.com/user-attachments/assets/2b5083d9-c8d3-4095-9c32-9b462d61ded9" />
+
 
 ## Description
 
