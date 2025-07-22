@@ -18,11 +18,11 @@ $guid = 'eee1e7ca-caac-4cf9-ab6c-7160f41e36f3'
 
 # Email Configuration
 $emailConfig = @{
-    SMTPServer = "mx.app.ghosties.email"
+    SMTPServer = "SMTP.Yourserver"
     Port       = 587                    # Update if needed
-    From       = "powershell@app.ghosties.email" # Update with your sender address
-    To         = "brandon.cook@gadellnet.com" # Update with recipient address
-    Subject    = "Mercy - Dropbox Office Integration Deployment Report"
+    From       = "Your Sender" # Update with your sender address
+    To         = "Your recipient" # Update with recipient address
+    Subject    = "Dropbox Office Integration Deployment Report"
     UseSsl     = $true
     Credential = $null                  # Will be set later
 }
@@ -308,8 +308,8 @@ $logContent
     # Set up credentials for SMTP
     try {
         Write-Log "    Setting up email credentials..."
-    $securePassword = ConvertTo-SecureString "F0ZqzIVb1cGgGGql61OgZE3J" -AsPlainText -Force
-    $emailConfig.Credential = New-Object System.Management.Automation.PSCredential("powershell@app.ghosties.email", $securePassword)
+    $securePassword = ConvertTo-SecureString "YOURPASSWORD" -AsPlainText -Force
+    $emailConfig.Credential = New-Object System.Management.Automation.PSCredential("YOURSMTPLOGIN", $securePassword)
         
         # Ignore certificate validation
         Write-Log "    Configuring to ignore invalid certificates..."
