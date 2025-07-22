@@ -1,440 +1,362 @@
-# =================================================================================================================
-# Combined OneDrive Removal Script (All Actions Enabled by Default)
-# Version: 1.4
-# Disclaimer: Use at your own risk. Test before production deployment.
-# =================================================================================================================
+<#
+.SYNOPSIS
+  Uninstall OneDrive, re-enable Office Cloud Storage, and configure
+  Dropbox as the default save location for Office apps.
 
-param(
-    [switch]$StopProcesses = $true,
-    [switch]$UninstallOneDrive = $true,
-    [switch]$RemoveStartupEntries = $true,
-    [switch]$RemoveModernApp = $true,
-    [switch]$RemoveUserData = $true,
-    [switch]$RegistryCleanup = $true,
-    [switch]$PreventSetupNewUsers = $true,
-    [switch]$PolicyBlock = $true,
-    [switch]$RestartExplorer = $true
-)
+.DESCRIPTION
+  1. Removes any Office policies that disable Cloud Storage providers.
+  2. Ensures online content is allowed in Office ("UseOnlineContent").
+  3. Uninstalls OneDrive (32/64-bit) and cleans up leftovers.
+  4. Injects Dropbox as a Cloud Storage provider into each user hive
+     and the Default User hive.
+  5. Logs all actions to C:\temp\dropboxupdates.log
+  6. Emails log file contents upon completion
+#>
 
-$ErrorActionPreference = "Continue"
-$LogPath = "$env:TEMP"
-$LogFile = "$LogPath\OneDriveCombinedRemoval_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').log"
+# GUID Dropbox uses in Office's Cloud Storage
+$guid = 'eee1e7ca-caac-4cf9-ab6c-7160f41e36f3'
 
+# Email Configuration
+$emailConfig = @{
+    SMTPServer = "mx.app.ghosties.email"
+    Port       = 587                    # Update if needed
+    From       = "powershell@app.ghosties.email" # Update with your sender address
+    To         = "brandon.cook@gadellnet.com" # Update with recipient address
+    Subject    = "Mercy - Dropbox Office Integration Deployment Report"
+    UseSsl     = $true
+    Credential = $null                  # Will be set later
+}
+
+# Log file path
+$logFile = "C:\temp\dropboxupdates.log"
+
+# Create log directory if it doesn't exist
+if (-not (Test-Path "C:\temp")) {
+    New-Item -Path "C:\temp" -ItemType Directory -Force | Out-Null
+}
+
+# Initialize log file
+$timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+"[$timestamp] === SCRIPT STARTED: Set-DropboxDefaultSave.ps1 ===" | Out-File -FilePath $logFile -Force
+
+# Function to write to both console and log file
 function Write-Log {
-    param(
+    param (
         [string]$Message,
-        [ValidateSet("Info", "Warning", "Error", "Success", "Debug")]
-        [string]$Level = "Info",
-        [System.Management.Automation.ErrorRecord]$ErrorRecord = $null
+        [switch]$NoConsole
     )
-    $TimeStamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $LogEntry = "[$TimeStamp] [$Level] $Message"
-    if ($ErrorRecord) {
-        $LogEntry += "`n    Exception: $($ErrorRecord.Exception.Message)"
-        $LogEntry += "`n    Category: $($ErrorRecord.CategoryInfo.Category)"
-        $LogEntry += "`n    TargetObject: $($ErrorRecord.TargetObject)"
-        $LogEntry += "`n    FullyQualifiedErrorId: $($ErrorRecord.FullyQualifiedErrorId)"
-        if ($ErrorRecord.ScriptStackTrace) {
-            $LogEntry += "`n    StackTrace: $($ErrorRecord.ScriptStackTrace)"
-        }
-    }
-    $LogEntry | Out-File -FilePath $LogFile -Append -Encoding UTF8
-    switch ($Level) {
-        "Error" { Write-Host $Message -ForegroundColor Red }
-        "Warning" { Write-Host $Message -ForegroundColor Yellow }
-        "Success" { Write-Host $Message -ForegroundColor Green }
-        "Debug" { Write-Host $Message -ForegroundColor Cyan }
-        default { Write-Host $Message -ForegroundColor White }
+    
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    "[$timestamp] $Message" | Out-File -FilePath $logFile -Append
+    
+    if (-not $NoConsole) {
+        Write-Output $Message
     }
 }
 
-function Invoke-CommandWithLogging {
-    param(
-        [string]$Command,
-        [string]$Arguments = "",
-        [string]$Description
+function ReEnable-OfficeCloudFeatures {
+    Write-Log "==> Re-enabling Office Cloud Storage integration…"
+
+    # 1) Remove any policy keys that disable Cloud Storage providers
+    $policyCloudPaths = @(
+        'HKLM:\SOFTWARE\Policies\Microsoft\Office\16.0\Common\CloudStorage',
+        'HKCU:\SOFTWARE\Policies\Microsoft\Office\16.0\Common\CloudStorage'
     )
-    Write-Log "Executing: $Command $Arguments" -Level "Debug"
+    foreach ($p in $policyCloudPaths) {
+        if (Test-Path $p) {
+            Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Log "    Removed policy key: $p"
+        }
+    }
+
+    # 2) Ensure online content is allowed (UseOnlineContent = 2)
+    $policyInternetPaths = @(
+        'HKLM:\SOFTWARE\Policies\Microsoft\Office\16.0\Common\Internet',
+        'HKCU:\SOFTWARE\Policies\Microsoft\Office\16.0\Common\Internet'
+    )
+    foreach ($p in $policyInternetPaths) {
+        if (-not (Test-Path $p)) {
+            New-Item -Path $p -Force | Out-Null
+            Write-Log "    Created policy path: $p"
+        }
+        New-ItemProperty -Path $p `
+                        -Name UseOnlineContent `
+                        -PropertyType DWord `
+                        -Value 2 `
+                        -Force | Out-Null
+        Write-Log "    Set UseOnlineContent=2 at $p"
+    }
+}
+
+function Uninstall-OneDrive {
+    Write-Log "==> Uninstalling OneDrive if present…"
+    $paths = @(
+      "$env:SystemRoot\SysWOW64\OneDriveSetup.exe",
+      "$env:SystemRoot\System32\OneDriveSetup.exe"
+    )
+    foreach ($exe in $paths) {
+        if (Test-Path $exe) {
+            Write-Log "    Running: $exe /uninstall"
+            & "$exe" /uninstall | Out-Null
+            break
+        }
+    }
+}
+
+function Cleanup-OneDriveLeftovers {
+    Write-Log "==> Removing OneDrive leftover folders…"
+    $folders = @(
+      "$env:LOCALAPPDATA\Microsoft\OneDrive"
+      (Join-Path $env:USERPROFILE "OneDrive")
+      "$env:PROGRAMDATA\Microsoft OneDrive"
+      "$env:PROGRAMFILES\Microsoft OneDrive"
+      "$env:PROGRAMFILES(x86)\Microsoft OneDrive"
+    )
+    foreach ($f in $folders) {
+        if (Test-Path $f) {
+            Remove-Item $f -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Log "    Removed $f"
+        }
+    }
+
+    Write-Log "==> Deleting OneDrive scheduled task…"
+    schtasks.exe /Delete /TN "OneDrive Standalone Update Task-S-*" /F 2>$null
+
+    Write-Log "==> Removing OneDrive Group Policy key…"
+    Remove-Item "HKLM:\SOFTWARE\Policies\Microsoft\Windows\OneDrive" `
+                -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+function Add-DropboxCloudStorageKey {
+    param (
+      [string] $hivePrefix,   # e.g. "HKU\TempHive_S-1-5-21-…"
+      [string] $dropboxDir    # full path to that user's Dropbox folder
+    )
+
+    Write-Log "    Adding Dropbox registry keys to $hivePrefix"
+    
+    # Convert HKU\TempHive_xxx to proper registry path format
+    $regPath = $hivePrefix -replace "^HKU\\", "HKEY_USERS\"
+    
+    # Create the base key path
+    $keyPath = "Software\Microsoft\Office\Common\Cloud Storage\$guid"
+    
     try {
-        if ($Arguments) {
-            $result = & $Command $Arguments.Split(' ') 2>&1
-        } else {
-            $result = & $Command 2>&1
+        # Create the base key
+        $fullPath = Join-Path $regPath $keyPath
+        if (!(Test-Path "Registry::$fullPath")) {
+            New-Item -Path "Registry::$fullPath" -Force | Out-Null
+            Write-Log "    Created key: $fullPath"
         }
-        if ($LASTEXITCODE -eq 0) {
-            Write-Log "$Description completed successfully" -Level "Success"
-            if ($result) {
-                Write-Log "Output: $result" -Level "Debug"
-            }
-        } else {
-            Write-Log "$Description failed with exit code $LASTEXITCODE" -Level "Error"
-            if ($result) {
-                Write-Log "Error output: $result" -Level "Error"
-            }
+        
+        # Set the values
+        $values = @{
+            "Description" = "Dropbox complicates the way you create, share and collaborate. Bring your photos, docs, and videos anywhere and keep your files safe."
+            "DisplayName" = "Dropbox"
+            "LearnMoreURL" = "https://www.dropbox.com/"
+            "LocalFolderRoot" = $dropboxDir
+            "ManageURL" = "https://www.dropbox.com/account"
+            "Url48x48" = "http://dl.dropbox.com/u/46565/metro/Dropbox_48x48.png"
         }
-        return $LASTEXITCODE -eq 0
-    } catch {
-        Write-Log "$Description failed with exception" -Level "Error" -ErrorRecord $_
+        
+        foreach ($key in $values.Keys) {
+            New-ItemProperty -Path "Registry::$fullPath" -Name $key -Value $values[$key] -PropertyType String -Force | Out-Null
+            Write-Log "    Set value: $key = $($values[$key])" -NoConsole
+        }
+        
+        # Create Thumbnails subkey
+        $thumbPath = Join-Path $fullPath "Thumbnails"
+        if (!(Test-Path "Registry::$thumbPath")) {
+            New-Item -Path "Registry::$thumbPath" -Force | Out-Null
+            Write-Log "    Created thumbnails key: $thumbPath"
+        }
+        
+        # Set thumbnail values
+        $thumbs = @{
+            "Url16x16" = "http://dl.dropbox.com/u/46565/metro/Dropbox_16x16.png"
+            "Url20x20" = "http://dl.dropbox.com/u/46565/metro/Dropbox_24x24.png"
+            "Url24x24" = "http://dl.dropbox.com/u/46565/metro/Dropbox_24x24.png"
+            "Url32x32" = "http://dl.dropbox.com/u/46565/metro/Dropbox_32x32.png"
+            "Url40x40" = "http://dl.dropbox.com/u/46565/metro/Dropbox_40x40.png"
+            "Url48x48" = "http://dl.dropbox.com/u/46565/metro/Dropbox_48x48.png"
+        }
+        
+        foreach ($key in $thumbs.Keys) {
+            New-ItemProperty -Path "Registry::$thumbPath" -Name $key -Value $thumbs[$key] -PropertyType String -Force | Out-Null
+            Write-Log "    Set thumbnail: $key = $($thumbs[$key])" -NoConsole
+        }
+        
+        Write-Log "    Successfully added Dropbox registry entries"
+        return $true
+    }
+    catch {
+        Write-Log "    ERROR adding registry keys: $_"
         return $false
     }
 }
 
-If (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
-    Write-Log "Please run this script as Administrator!" -Level "Error"
-    exit 1
-}
+function Configure-For-AllUsers {
+    Write-Log "==> Writing Dropbox keys to each existing user hive…"
+    $plist = Get-ChildItem "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList"
+    foreach ($pi in $plist) {
+        $sid = $pi.PSChildName
+        $profilePath = (Get-ItemProperty -Path $pi.PSPath -Name ProfileImagePath).ProfileImagePath
+        if (-not (Test-Path $profilePath))                             { continue }
+        if ($profilePath -match '\\(Public|Default User|All Users)$') { continue }
 
-Write-Log "=== OneDrive Combined Removal Script Started ===" -Level "Info"
-Write-Log "Script version: 1.4 (All Actions Enabled by Default)" -Level "Info"
-Write-Log "Current user: $env:USERNAME" -Level "Info"
-Write-Log "Computer name: $env:COMPUTERNAME" -Level "Info"
-Write-Log "Options selected:" -Level "Info"
-Write-Log "  StopProcesses: $StopProcesses" -Level "Info"
-Write-Log "  UninstallOneDrive: $UninstallOneDrive" -Level "Info"
-Write-Log "  RemoveStartupEntries: $RemoveStartupEntries" -Level "Info"
-Write-Log "  RemoveModernApp: $RemoveModernApp" -Level "Info"
-Write-Log "  RemoveUserData: $RemoveUserData" -Level "Info"
-Write-Log "  RegistryCleanup: $RegistryCleanup" -Level "Info"
-Write-Log "  PreventSetupNewUsers: $PreventSetupNewUsers" -Level "Info"
-Write-Log "  PolicyBlock: $PolicyBlock" -Level "Info"
-Write-Log "  RestartExplorer: $RestartExplorer" -Level "Info"
+        $ntuserDat = Join-Path $profilePath 'NTUSER.DAT'
+        if (-not (Test-Path $ntuserDat)) { continue }
 
-$Stats = @{
-    ProcessesStopped = 0
-    UninstallAttempts = 0
-    UninstallSuccesses = 0
-    UsersProcessed = 0
-    RegistryEntriesRemoved = 0
-    FoldersRemoved = 0
-    ErrorsEncountered = 0
-    FilesSkipped = 0
-}
-
-if ($StopProcesses) {
-    Write-Log "Terminating all OneDrive processes..." -Level "Info"
-    try {
-        $processes = Get-Process OneDrive -ErrorAction SilentlyContinue
-        if ($processes) {
-            foreach ($proc in $processes) {
-                try {
-                    Write-Log "Stopping OneDrive process (PID: $($proc.Id))" -Level "Debug"
-                    $proc | Stop-Process -Force
-                    $Stats.ProcessesStopped++
-                } catch {
-                    Write-Log "Failed to stop OneDrive process (PID: $($proc.Id))" -Level "Error" -ErrorRecord $_
-                    $Stats.ErrorsEncountered++
-                }
-            }
-            Write-Log "Terminated $($Stats.ProcessesStopped) OneDrive processes" -Level "Success"
-        } else {
-            Write-Log "No OneDrive processes found running" -Level "Info"
-        }
-    } catch {
-        Write-Log "Error while checking for OneDrive processes" -Level "Error" -ErrorRecord $_
-        $Stats.ErrorsEncountered++
-    }
-}
-
-if ($UninstallOneDrive) {
-    Write-Log "Uninstalling OneDrive system-wide..." -Level "Info"
-    $setupPaths = @(
-        "$env:SystemRoot\System32\OneDriveSetup.exe",
-        "$env:SystemRoot\SysWOW64\OneDriveSetup.exe"
-    )
-    foreach ($exe in $setupPaths) {
-        $Stats.UninstallAttempts++
-        if (Test-Path $exe) {
-            Write-Log "Found OneDrive setup at: $exe" -Level "Info"
-            if (Invoke-CommandWithLogging -Command $exe -Arguments "/uninstall" -Description "OneDrive uninstall") {
-                $Stats.UninstallSuccesses++
-            } else {
-                $Stats.ErrorsEncountered++
-            }
-        } else {
-            Write-Log "OneDrive setup not found at: $exe" -Level "Warning"
-        }
-    }
-}
-
-if ($RemoveModernApp) {
-    Write-Log "Attempting to uninstall the modern OneDrive app..." -Level "Info"
-    try {
-        $modernApp = Get-AppxPackage -AllUsers -Name "Microsoft.OneDriveSync" -ErrorAction SilentlyContinue
-        if ($modernApp) {
-            Write-Log "Found modern OneDrive app: $($modernApp.PackageFullName)" -Level "Info"
-            $modernApp | Remove-AppxPackage -AllUsers -ErrorAction Stop
-            Write-Log "Successfully uninstalled the modern OneDrive app" -Level "Success"
-        } else {
-            Write-Log "Modern OneDrive app not found" -Level "Info"
-        }
-    } catch {
-        Write-Log "Error uninstalling modern OneDrive app" -Level "Error" -ErrorRecord $_
-        $Stats.ErrorsEncountered++
-    }
-}
-
-if ($RemoveStartupEntries) {
-    Write-Log "Removing OneDrive from startup for all users..." -Level "Info"
-    $userProfiles = Get-ChildItem 'C:\Users' -Directory | Where-Object {
-        (Test-Path "$($_.FullName)\NTUSER.DAT") -and
-        ($_.Name -notin @('Default', 'Public', 'All Users', 'Default User'))
-    }
-    Write-Log "Found $($userProfiles.Count) user profiles to process" -Level "Info"
-    foreach ($profile in $userProfiles) {
-        $userName = $profile.Name
-        $userPath = $profile.FullName
-        $Stats.UsersProcessed++
-        Write-Log "Processing user: $userName" -Level "Info"
+        $tempHive = "TempHive_$sid"
+        Write-Log "    Loading hive for SID $sid ($profilePath)…"
+        
         try {
-            $ntUserDat = "$userPath\NTUSER.DAT"
-            $tempHive = "HKU\TempHive_$userName"
-            Write-Log "Loading registry hive for $userName" -Level "Debug"
-            $loadResult = Invoke-CommandWithLogging -Command "reg" -Arguments "load `"$tempHive`" `"$ntUserDat`"" -Description "Registry hive load for $userName"
-            if ($loadResult) {
-                $runKeyPath = "Registry::$tempHive\Software\Microsoft\Windows\CurrentVersion\Run"
-                if (Test-Path $runKeyPath) {
-                    $runKey = Get-ItemProperty -Path $runKeyPath -ErrorAction SilentlyContinue
-                    if ($runKey -and $runKey.PSObject.Properties.Name -contains "OneDrive") {
-                        Remove-ItemProperty -Path $runKeyPath -Name "OneDrive" -ErrorAction Stop
-                        Write-Log "Removed OneDrive from Run registry key for $userName" -Level "Success"
-                        $Stats.RegistryEntriesRemoved++
-                    } else {
-                        Write-Log "OneDrive not found in Run registry key for $userName" -Level "Info"
-                    }
-                } else {
-                    Write-Log "Run registry key not found for $userName" -Level "Warning"
-                }
-                Write-Log "Unloading registry hive for $userName" -Level "Debug"
-                Invoke-CommandWithLogging -Command "reg" -Arguments "unload `"$tempHive`"" -Description "Registry hive unload for $userName" | Out-Null
-            } else {
-                $Stats.ErrorsEncountered++
+            # Load the hive
+            & reg.exe LOAD "HKU\$tempHive" "$ntuserDat" | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Log "    Failed to load hive for $sid (error code $LASTEXITCODE)"
+                continue
             }
-        } catch {
-            Write-Log "Error processing registry for $userName" -Level "Error" -ErrorRecord $_
-            $Stats.ErrorsEncountered++
-            try { reg unload $tempHive 2>&1 | Out-Null } catch { }
+            
+            $dropboxDir = Join-Path $profilePath 'Dropbox'
+            Add-DropboxCloudStorageKey -hivePrefix "HKU\$tempHive" -dropboxDir $dropboxDir
         }
-        $startupFolder = "$userPath\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup"
-        $oneDriveLnk = Join-Path $startupFolder "OneDrive.lnk"
-        if (Test-Path $oneDriveLnk) {
-            try {
-                Remove-Item $oneDriveLnk -Force -ErrorAction Stop
-                Write-Log "Removed OneDrive shortcut from startup folder for $userName" -Level "Success"
-                $Stats.FoldersRemoved++
-            } catch {
-                Write-Log "Failed to remove OneDrive shortcut for $userName" -Level "Error" -ErrorRecord $_
-                $Stats.ErrorsEncountered++
-            }
-        } else {
-            Write-Log "OneDrive shortcut not found in startup folder for $userName" -Level "Info"
+        catch {
+            Write-Log ("    Error processing hive for {0}: {1}" -f $sid, $_)
+        }
+        finally {
+            # Always try to unload the hive
+            Write-Log "    Unloading hive for $sid…"
+            [gc]::Collect() # Force garbage collection to release file handles
+            Start-Sleep -Seconds 1
+            & reg.exe UNLOAD "HKU\$tempHive" | Out-Null
         }
     }
-    $allUsersStartup = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp\OneDrive.lnk"
-    if (Test-Path $allUsersStartup) {
+}
+
+function Configure-DefaultUser {
+    $defaultNt = 'C:\Users\Default\NTUSER.DAT'
+    if (Test-Path $defaultNt) {
+        Write-Log "==> Writing Dropbox keys into Default User hive…"
+        $tempHive = 'DefaultHive'
+        
         try {
-            Remove-Item $allUsersStartup -Force -ErrorAction Stop
-            Write-Log "Removed OneDrive shortcut from All Users startup folder" -Level "Success"
-            $Stats.FoldersRemoved++
-        } catch {
-            Write-Log "Failed to remove OneDrive shortcut from All Users startup folder" -Level "Error" -ErrorRecord $_
-            $Stats.ErrorsEncountered++
-        }
-    } else {
-        Write-Log "OneDrive shortcut not found in All Users startup folder" -Level "Info"
-    }
-}
-
-if ($RemoveUserData) {
-    Write-Log "Removing OneDrive data and credentials for all users..." -Level "Info"
-    $userProfiles = Get-ChildItem 'C:\Users' -Directory | Where-Object { 
-        $_.Name -notin @('Default', 'Public', 'All Users', 'Default User')
-    }
-    foreach ($profile in $userProfiles) {
-        $userName = $profile.Name
-        $userPath = $profile.FullName
-        Write-Log "Removing OneDrive data for user: $userName" -Level "Info"
-        $folders = @(
-            "$userPath\OneDrive",
-            "$userPath\AppData\Local\Microsoft\OneDrive",
-            "$userPath\AppData\Roaming\Microsoft\OneDrive"
-        )
-        foreach ($folder in $folders) {
-            if (Test-Path $folder) {
-                try {
-                    $folderSize = (Get-ChildItem $folder -Recurse -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
-                    $folderSizeMB = [math]::Round($folderSize / 1MB, 2)
-                    Remove-Item $folder -Recurse -Force -ErrorAction Stop
-                    Write-Log "Removed OneDrive folder: $folder (Size: $folderSizeMB MB)" -Level "Success"
-                    $Stats.FoldersRemoved++
-                } catch {
-                    Write-Log "Failed to remove OneDrive folder: $folder" -Level "Error" -ErrorRecord $_
-                    $Stats.ErrorsEncountered++
-                    try {
-                        $lockedFiles = Get-ChildItem $folder -Recurse -ErrorAction SilentlyContinue | Where-Object {
-                            try {
-                                [System.IO.File]::OpenWrite($_.FullName).Close()
-                                $false
-                            } catch {
-                                $true
-                            }
-                        }
-                        if ($lockedFiles) {
-                            Write-Log "Locked files preventing removal:" -Level "Warning"
-                            foreach ($file in $lockedFiles) {
-                                Write-Log "  - $($file.FullName)" -Level "Warning"
-                                $Stats.FilesSkipped++
-                            }
-                        }
-                    } catch {
-                        Write-Log "Could not enumerate locked files in $folder" -Level "Warning"
-                    }
-                }
-            } else {
-                Write-Log "OneDrive folder not found: $folder" -Level "Info"
+            # Load the hive
+            & reg.exe LOAD "HKU\$tempHive" "$defaultNt" | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Log "    Failed to load Default User hive (error code $LASTEXITCODE)"
+                return
             }
+            
+            $dropboxDir = '%USERPROFILE%\Dropbox'
+            Add-DropboxCloudStorageKey -hivePrefix "HKU\$tempHive" -dropboxDir $dropboxDir
         }
-    }
-    $systemFolders = @("C:\ProgramData\Microsoft OneDrive", "C:\OneDriveTemp")
-    foreach ($sysFolder in $systemFolders) {
-        if (Test-Path $sysFolder) {
-            try {
-                Remove-Item $sysFolder -Recurse -Force -ErrorAction Stop
-                Write-Log "Removed system OneDrive folder: $sysFolder" -Level "Success"
-                $Stats.FoldersRemoved++
-            } catch {
-                Write-Log "Failed to remove system OneDrive folder: $sysFolder" -Level "Error" -ErrorRecord $_
-                $Stats.ErrorsEncountered++
-            }
-        } else {
-            Write-Log "System OneDrive folder not found: $sysFolder" -Level "Info"
+        catch {
+            Write-Log ("    Error processing Default User hive: {0}" -f $_)
+        }
+        finally {
+            # Always try to unload the hive
+            [gc]::Collect() # Force garbage collection to release file handles
+            Start-Sleep -Seconds 1
+            & reg.exe UNLOAD "HKU\$tempHive" | Out-Null
         }
     }
 }
 
-if ($RegistryCleanup) {
-    Write-Log "Scrubbing the registry of OneDrive entries..." -Level "Info"
-    $navPaneKeys = @(
-        "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{018D5C66-4533-4307-9B53-224DE2ED1FE6}",
-        "HKCU:\Software\Classes\CLSID\{018D5C66-4533-4307-9B53-224DE2ED1FE6}",
-        "HKCU:\Software\Classes\Wow6432Node\CLSID\{018D5C66-4533-4307-9B53-224DE2ED1FE6}"
-    )
-    foreach ($key in $navPaneKeys) {
-        if (Test-Path $key) {
-            try {
-                Remove-Item -Path $key -Recurse -Force -ErrorAction Stop
-                Write-Log "Removed registry key: $key" -Level "Success"
-                $Stats.RegistryEntriesRemoved++
-            } catch {
-                Write-Log "Failed to remove registry key: $key" -Level "Error" -ErrorRecord $_
-                $Stats.ErrorsEncountered++
-            }
-        } else {
-            Write-Log "Registry key not found: $key" -Level "Info"
-        }
-    }
-    $pathsToClean = @(
-        "HKLM:\SOFTWARE\Policies\Microsoft\Windows\OneDrive",
-        "HKCU:\Software\Microsoft\OneDrive",
-        "HKLM:\SOFTWARE\Microsoft\OneDrive"
-    )
-    foreach ($path in $pathsToClean) {
-        if (Test-Path $path) {
-            try {
-                Remove-Item -Path $path -Recurse -Force -ErrorAction Stop
-                Write-Log "Removed registry path: $path" -Level "Success"
-                $Stats.RegistryEntriesRemoved++
-            } catch {
-                Write-Log "Failed to remove registry path: $path" -Level "Error" -ErrorRecord $_
-                $Stats.ErrorsEncountered++
-            }
-        } else {
-            Write-Log "Registry path not found: $path" -Level "Info"
-        }
-    }
-}
-
-if ($PreventSetupNewUsers) {
-    Write-Log "Preventing OneDrive setup for new users..." -Level "Info"
-    $defaultUserHive = "hklm\Default_profile"
-    $defaultUserDat = "C:\Users\Default\NTUSER.DAT"
-    if (Test-Path $defaultUserDat) {
-        if (Invoke-CommandWithLogging -Command "reg" -Arguments "load `"$defaultUserHive`" `"$defaultUserDat`"" -Description "Load Default user hive") {
-            if (Invoke-CommandWithLogging -Command "reg" -Arguments "delete `"$defaultUserHive\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`" /v `"OneDriveSetup`" /f" -Description "Remove OneDriveSetup from Default user") {
-                $Stats.RegistryEntriesRemoved++
-            } else {
-                $Stats.ErrorsEncountered++
-            }
-            Invoke-CommandWithLogging -Command "reg" -Arguments "unload `"$defaultUserHive`"" -Description "Unload Default user hive" | Out-Null
-        } else {
-            $Stats.ErrorsEncountered++
-        }
-    } else {
-        Write-Log "Default user NTUSER.DAT not found at: $defaultUserDat" -Level "Warning"
-    }
-}
-
-if ($PolicyBlock) {
-    Write-Log "Applying registry policy to disable OneDrive file sync..." -Level "Info"
-    $policyRegPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\OneDrive"
+function Send-CompletionEmail {
+    Write-Log "==> Preparing to send email notification..."
+    
+    # Get computer name and IP for the report
+    $computerName = $env:COMPUTERNAME
     try {
-        if (-not (Test-Path $policyRegPath)) {
-            New-Item -Path $policyRegPath -Force -ErrorAction Stop | Out-Null
-            Write-Log "Created policy registry path: $policyRegPath" -Level "Success"
-        }
-        Set-ItemProperty -Path $policyRegPath -Name "DisableFileSyncNGSC" -Value 1 -Type DWord -Force -ErrorAction Stop
-        Write-Log "Set registry policy to disable OneDrive file sync" -Level "Success"
-        $Stats.RegistryEntriesRemoved++
-    } catch {
-        Write-Log "Failed to set policy registry value" -Level "Error" -ErrorRecord $_
-        $Stats.ErrorsEncountered++
+        $ipAddresses = [System.Net.Dns]::GetHostAddresses($computerName) | 
+                       Where-Object { $_.AddressFamily -eq 'InterNetwork' } | 
+                       ForEach-Object { $_.IPAddressToString }
+        $ipInfo = $ipAddresses -join ', '
     }
-}
-
-if ($RestartExplorer) {
-    Write-Log "Restarting Windows Explorer to apply changes..." -Level "Info"
+    catch {
+        $ipInfo = "Unable to determine IP"
+        Write-Log "    Warning: Could not get IP address: $_"
+    }
+    
+    # Read log file content
     try {
-        $explorerProcesses = Get-Process explorer -ErrorAction SilentlyContinue
-        if ($explorerProcesses) {
-            $explorerProcesses | Stop-Process -Force -ErrorAction Stop
-            Write-Log "Stopped Explorer processes" -Level "Success"
-        }
-        Start-Sleep -Seconds 2
-        Start-Process -FilePath "explorer.exe" -ErrorAction Stop
-        Write-Log "Windows Explorer restarted" -Level "Success"
-    } catch {
-        Write-Log "Failed to restart Explorer" -Level "Error" -ErrorRecord $_
-        $Stats.ErrorsEncountered++
+        $logContent = Get-Content -Path $logFile -Raw -ErrorAction Stop
+    }
+    catch {
+        $logContent = "Error reading log file: $_"
+        Write-Log "    Error reading log file: $_"
+    }
+    
+    # Create email body with HTML formatting
+    $emailBody = @"
+<html>
+<body style="font-family: Calibri, Arial, sans-serif; font-size: 12pt;">
+<h2>Dropbox Office Integration Deployment Report</h2>
+<p><strong>Computer:</strong> $computerName</p>
+<p><strong>IP Address:</strong> $ipInfo</p>
+<p><strong>Execution Time:</strong> $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")</p>
+
+<h3>Log Output:</h3>
+<pre style="background-color: #f5f5f5; padding: 10px; border: 1px solid #ddd; font-family: Consolas, monospace; white-space: pre-wrap;">
+$logContent
+</pre>
+</body>
+</html>
+"@
+
+    # Set up credentials for SMTP
+    try {
+        Write-Log "    Setting up email credentials..."
+    $securePassword = ConvertTo-SecureString "F0ZqzIVb1cGgGGql61OgZE3J" -AsPlainText -Force
+    $emailConfig.Credential = New-Object System.Management.Automation.PSCredential("powershell@app.ghosties.email", $securePassword)
+        
+        # Ignore certificate validation
+        Write-Log "    Configuring to ignore invalid certificates..."
+        [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+        
+        # Send the email
+        Write-Log "    Sending email to $($emailConfig.To)..."
+        Send-MailMessage @emailConfig -Body $emailBody -BodyAsHtml -ErrorAction Stop
+        Write-Log "==> Email notification sent successfully"
+    }
+    catch {
+        Write-Log "==> ERROR: Failed to send email notification: $_"
+        Write-Log "    Email server: $($emailConfig.SMTPServer):$($emailConfig.Port)"
+        Write-Log "    From: $($emailConfig.From), To: $($emailConfig.To)"
+    }
+    finally {
+        # Reset certificate validation to default
+        [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $null
     }
 }
 
-Write-Log "==========================================================" -Level "Info"
-Write-Log "OneDrive combined removal script has completed" -Level "Success"
-Write-Log "EXECUTION STATISTICS:" -Level "Info"
-Write-Log "  Processes stopped: $($Stats.ProcessesStopped)" -Level "Info"
-Write-Log "  Uninstall attempts: $($Stats.UninstallAttempts)" -Level "Info"
-Write-Log "  Uninstall successes: $($Stats.UninstallSuccesses)" -Level "Info"
-Write-Log "  Users processed: $($Stats.UsersProcessed)" -Level "Info"
-Write-Log "  Registry entries removed: $($Stats.RegistryEntriesRemoved)" -Level "Info"
-Write-Log "  Folders removed: $($Stats.FoldersRemoved)" -Level "Info"
-Write-Log "  Files skipped (locked): $($Stats.FilesSkipped)" -Level "Info"
-Write-Log "  Errors encountered: $($Stats.ErrorsEncountered)" -Level "Info"
+# ==== MAIN ====
+try {
+    # Get computer info for the log
+    $computerInfo = "Computer: $env:COMPUTERNAME, User: $env:USERNAME, Domain: $env:USERDOMAIN"
+    Write-Log "System Info: $computerInfo" -NoConsole
+    
+    # Run main functions
+    ReEnable-OfficeCloudFeatures
+    Uninstall-OneDrive
+    Cleanup-OneDriveLeftovers
+    Configure-For-AllUsers
+    Configure-DefaultUser
 
-if ($Stats.ErrorsEncountered -gt 0) {
-    Write-Log "Script completed with $($Stats.ErrorsEncountered) errors - review log for details" -Level "Warning"
-} else {
-    Write-Log "Script completed successfully with no errors" -Level "Success"
+    Write-Log "✔ All done. Office will now list Dropbox as a Cloud Storage provider."
+    
+    # Send email with log contents
+    Send-CompletionEmail
 }
-Write-Log "A system restart is recommended to finalize all changes" -Level "Warning"
-Write-Log "==========================================================" -Level "Info"
-Write-Log "Log file saved to: $LogFile" -Level "Info"
-
-if ($Stats.ErrorsEncountered -gt 0) {
-    Write-Output "OneDrive removal completed with errors. See log: $LogFile"
-    exit 1
-} else {
-    Write-Output "OneDrive removal completed successfully. See log: $LogFile"
-    exit 0
+catch {
+    # Log any unhandled exceptions
+    Write-Log "!!! ERROR: An unhandled exception occurred: $_"
+    Write-Log $_.ScriptStackTrace
+    
+    # Try to send email with error info
+    Send-CompletionEmail
+    
+    # Re-throw the error so Intune knows the script failed
+    throw $_
 }
-
-
-exit $(if ($Stats.ErrorsEncountered -gt 0) { 1 } else { 0 })
