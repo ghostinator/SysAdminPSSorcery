@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Uninstall OneDrive, re-enable Office Cloud Storage, and configure
   Dropbox as the default save location for Office apps.
