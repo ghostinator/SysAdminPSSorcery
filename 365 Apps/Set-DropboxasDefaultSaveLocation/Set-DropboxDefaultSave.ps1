@@ -10,7 +10,6 @@
   4. Injects Dropbox as a Cloud Storage provider into each user hive
      and the Default User hive.
   5. Logs all actions to C:\temp\dropboxupdates.log
-  6. Emails log file contents upon completion
 #>
 
 # GUID Dropbox uses in Office's Cloud Storage
