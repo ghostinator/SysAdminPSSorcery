@@ -6,6 +6,9 @@ A comprehensive PowerShell tool for managing cloud storage providers in Office 3
 **Email:** brandon@ghostinator.co  
 **GitHub:** https://github.com/ghostinator/SysAdminPSSorcery
 
+<img width="934" height="637" alt="CleanShot 2025-07-30 at 15 09 31" src="https://github.com/user-attachments/assets/efeffc0f-27d5-463b-a479-8616ae1914ac" />
+
+
 ## Overview
 
 This enterprise-ready PowerShell script provides system administrators with complete control over Office 365 cloud storage integration across all user profiles on a system. It features both a modern WPF GUI and command-line interface for flexible deployment scenarios.
