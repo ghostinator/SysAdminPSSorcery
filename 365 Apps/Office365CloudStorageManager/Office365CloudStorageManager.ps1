@@ -1,25 +1,34 @@
 ﻿#Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-    Office 365 Cloud Storage Provider Manager for Business
+    Office 365 Cloud Storage Provider Manager for Business - WPF Edition
 .DESCRIPTION
     This script manages cloud storage providers for Office 365 applications in business environments.
     Features:
     - Remove OneDrive from startup locations for all users
+    - Add OneDrive back to startup locations for all users
     - Configure enterprise cloud storage providers for Office 365
     - Set default save locations for Office applications
-    - GUI interface for easy management
+    - Modern WPF GUI interface with DataGrid
     - Scan and display current cloud provider configuration for all users
+    - Export results to CSV or HTML
+    - Optional password protection
+    - Self-elevation with UAC
 .PARAMETER Provider
     The cloud provider to configure: OneDrive, Dropbox, GoogleDrive, Box, ShareFile, Egnyte, or None
 .PARAMETER RemoveOneDrive
     Switch to remove OneDrive completely
 .PARAMETER SetAsDefault
     Switch to set the selected provider as default for Office applications
+.PARAMETER NoGUI
+    Switch to run without GUI (command line mode)
 .EXAMPLE
-    .\Office365CloudStorageManager.ps1 -Provider Dropbox -RemoveOneDrive -SetAsDefault
+    .\Office365CloudStorageManager.ps1 -Provider Dropbox -RemoveOneDrive -SetAsDefault -NoGUI
 .NOTES
     Run as Administrator to access all user profiles and registry hives
+    Created by: Brandon Cook
+    Email: brandon@ghostinator.co
+    GitHub: https://github.com/ghostinator/SysAdminPSSorcery
 #>
 
 [CmdletBinding()]
@@ -32,12 +41,15 @@ param(
     [switch]$RemoveOneDrive,
 
     [Parameter()]
-    [switch]$SetAsDefault
+    [switch]$SetAsDefault,
+
+    [Parameter()]
+    [switch]$NoGUI
 )
 
 #region CONFIGURATION SECTION - MODIFY FOR INTUNE DEPLOYMENT
 # Set to $true to enable this configuration section (for Intune deployment)
-# Set to $false to use command-line parameters or interactive menu
+# Set to $false to use command-line parameters or interactive GUI
 $UseHardcodedConfig = $false
 
 # Hard-coded configuration options (only used when $UseHardcodedConfig = $true)
@@ -51,11 +63,22 @@ $Config = @{
     # Set to $true to set the selected provider as default for Office, $false otherwise
     SetAsDefault = $true
 
-    # Set to $true to show interactive menu, $false for silent operation
-    # Note: For Intune, this should typically be $false
-    ShowMenu = $false
+    # Set to $true to show interactive GUI, $false for silent operation
+    ShowGUI = $false
+
+    # Password protection (leave empty to disable)
+    RequiredPassword = ""
 }
 #endregion
+
+# Auto-elevate if not running as administrator
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+    [Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    
+    Write-Host "Elevating to Administrator..." -ForegroundColor Yellow
+    Start-Process powershell.exe -Verb runAs -ArgumentList "-NoExit", "-ExecutionPolicy Bypass", "-File `"$PSCommandPath`"", ($args -join " ")
+    exit
+}
 
 # Configuration
 $ErrorActionPreference = "Continue"
@@ -67,6 +90,34 @@ function Write-Log {
     $Time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     "$Time $Message" | Out-File -FilePath $LogFile -Append -Encoding UTF8
     Write-Host $Message
+}
+
+function Test-Password {
+    param([string]$RequiredPassword)
+    
+    if ([string]::IsNullOrEmpty($RequiredPassword)) {
+        return $true
+    }
+    
+    $attempts = 0
+    do {
+        $attempts++
+        $password = Read-Host -AsSecureString "Enter admin tool password (Attempt $attempts/3)"
+        $plainPassword = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+            [Runtime.InteropServices.Marshal]::SecureStringToBSTR($password)
+        )
+        
+        if ($plainPassword -eq $RequiredPassword) {
+            return $true
+        }
+        
+        if ($attempts -lt 3) {
+            Write-Host "Incorrect password. Please try again." -ForegroundColor Red
+        }
+    } while ($attempts -lt 3)
+    
+    Write-Host "Too many failed attempts. Exiting..." -ForegroundColor Red
+    return $false
 }
 
 function Get-CloudProviderForAllUsers {
@@ -91,35 +142,56 @@ function Get-CloudProviderForAllUsers {
                 $officeCloudPath = "Registry::$tempHive\Software\Microsoft\Office\16.0\Common\Cloud"
                 $defaultCloud = "None"
                 $defaultSaveLoc = "None"
+                $oneDriveEnabled = "Unknown"
 
                 if (Test-Path $officeCloudPath) {
                     $props = Get-ItemProperty -Path $officeCloudPath -ErrorAction SilentlyContinue
                     if ($props) {
                         $defaultCloud = if ($props.DefaultCloudProvider) { $props.DefaultCloudProvider } else { "None" }
                         $defaultSaveLoc = if ($props.DefaultSaveLocation) { $props.DefaultSaveLocation } else { "None" }
+                        
+                        # Check OneDrive status
+                        $oneDriveEnabled = if ($props.EnableOneDriveInOffice -eq 1) { "Enabled" } else { "Disabled" }
                     }
                 }
 
+                # Check for OneDrive startup entry
+                $runKeyPath = "Registry::$tempHive\Software\Microsoft\Windows\CurrentVersion\Run"
+                $hasOneDriveStartup = $false
+                if (Test-Path $runKeyPath) {
+                    $runKey = Get-ItemProperty -Path $runKeyPath -ErrorAction SilentlyContinue
+                    $hasOneDriveStartup = ($runKey -and $runKey.PSObject.Properties.Name -contains "OneDrive")
+                }
+
                 $results += [PSCustomObject]@{
-                    User         = $userName
+                    User = $userName
                     CloudProvider = $defaultCloud
-                    SaveLocation  = $defaultSaveLoc
+                    SaveLocation = $defaultSaveLoc
+                    OneDriveOffice = $oneDriveEnabled
+                    OneDriveStartup = if ($hasOneDriveStartup) { "Yes" } else { "No" }
+                    Status = "OK"
                 }
 
                 reg unload $tempHive | Out-Null
             } else {
                 $results += [PSCustomObject]@{
-                    User          = $userName
-                    CloudProvider = "[Failed to load registry]"
-                    SaveLocation  = ""
+                    User = $userName
+                    CloudProvider = "Error"
+                    SaveLocation = "Error"
+                    OneDriveOffice = "Error"
+                    OneDriveStartup = "Error"
+                    Status = "Failed to load registry"
                 }
             }
         } catch {
             reg unload $tempHive 2>&1 | Out-Null
             $results += [PSCustomObject]@{
-                User          = $userName
-                CloudProvider = "[ERROR: $($_.Exception.Message)]"
-                SaveLocation  = ""
+                User = $userName
+                CloudProvider = "Error"
+                SaveLocation = "Error"
+                OneDriveOffice = "Error"
+                OneDriveStartup = "Error"
+                Status = $_.Exception.Message
             }
         }
     }
@@ -130,14 +202,12 @@ function Get-CloudProviderForAllUsers {
 function Remove-OneDriveStartup {
     Write-Log "Starting OneDrive startup removal for all existing users..."
 
-    # Get all user profiles with NTUSER.DAT files (existing users)
     $userProfiles = Get-ChildItem 'C:\Users' -Directory | Where-Object {
         (Test-Path "$($_.FullName)\NTUSER.DAT") -and
         ($_.Name -notin @('Default', 'Public', 'All Users', 'Default User'))
     }
 
     Write-Log "Found $($userProfiles.Count) user profiles to process"
-
     $totalRemoved = 0
 
     foreach ($userProfile in $userProfiles) {
@@ -145,17 +215,14 @@ function Remove-OneDriveStartup {
         $userPath = $userProfile.FullName
         Write-Log "Processing user: $userName"
 
-        # --- A. Remove from Registry (HKCU Run Key) ---
         try {
             $ntUserDat = "$userPath\NTUSER.DAT"
             $tempHive = "HKU\TempHive_$userName"
             
-            # Load the user's registry hive
             $loadResult = reg load $tempHive $ntUserDat 2>&1
             if ($LASTEXITCODE -eq 0) {
                 Write-Log "Loaded registry hive for $userName"
                 
-                # Check if OneDrive entry exists in Run key
                 $runKeyPath = "Registry::$tempHive\Software\Microsoft\Windows\CurrentVersion\Run"
                 if (Test-Path $runKeyPath) {
                     $runKey = Get-ItemProperty -Path $runKeyPath -ErrorAction SilentlyContinue
@@ -168,7 +235,6 @@ function Remove-OneDriveStartup {
                     }
                 }
                 
-                # Unload the registry hive
                 reg unload $tempHive | Out-Null
                 Write-Log "Unloaded registry hive for $userName"
             } else {
@@ -176,13 +242,10 @@ function Remove-OneDriveStartup {
             }
         } catch {
             Write-Log "Error processing registry for $userName`: $($_.Exception.Message)"
-            # Attempt to unload hive if it was loaded
             reg unload $tempHive 2>&1 | Out-Null
         }
         
-        # --- B. Remove from Startup Folders ---
-        
-        # Remove from user's personal startup folder
+        # Remove from startup folders
         $userStartupFolder = "$userPath\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup"
         $userOneDriveLnk = Join-Path $userStartupFolder "OneDrive.lnk"
         
@@ -194,8 +257,6 @@ function Remove-OneDriveStartup {
             } catch {
                 Write-Log "Failed to remove OneDrive shortcut from startup folder for $userName`: $($_.Exception.Message)"
             }
-        } else {
-            Write-Log "OneDrive shortcut not found in startup folder for $userName"
         }
     }
 
@@ -211,25 +272,130 @@ function Remove-OneDriveStartup {
         } catch {
             Write-Log "Failed to remove OneDrive shortcut from All Users startup folder: $($_.Exception.Message)"
         }
-    } else {
-        Write-Log "OneDrive shortcut not found in All Users startup folder"
     }
 
-    # Summary
-    Write-Log "OneDrive startup removal completed for all existing users."
-    Write-Log "Total startup entries removed: $totalRemoved"
-    
+    Write-Log "OneDrive startup removal completed. Total entries removed: $totalRemoved"
     return $totalRemoved
+}
+
+function Enable-OneDriveStartup {
+    Write-Log "Starting OneDrive startup enablement for all existing users..."
+
+    $userProfiles = Get-ChildItem 'C:\Users' -Directory | Where-Object {
+        (Test-Path "$($_.FullName)\NTUSER.DAT") -and
+        ($_.Name -notin @('Default', 'Public', 'All Users', 'Default User'))
+    }
+
+    Write-Log "Found $($userProfiles.Count) user profiles to process"
+    $totalAdded = 0
+
+    foreach ($userProfile in $userProfiles) {
+        $userName = $userProfile.Name
+        $userPath = $userProfile.FullName
+        Write-Log "Processing user: $userName"
+
+        try {
+            $ntUserDat = "$userPath\NTUSER.DAT"
+            $tempHive = "HKU\TempHiveEnable_$userName"
+            
+            $loadResult = reg load $tempHive $ntUserDat 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Log "Loaded registry hive for $userName"
+                
+                $runKeyPath = "Registry::$tempHive\Software\Microsoft\Windows\CurrentVersion\Run"
+                if (-not (Test-Path $runKeyPath)) {
+                    New-Item -Path $runKeyPath -Force | Out-Null
+                }
+
+                # Find OneDrive executable
+                $oneDriveExe = "$env:SystemRoot\System32\OneDrive.exe"
+                if (-not (Test-Path $oneDriveExe)) {
+                    $oneDriveExe = "$env:SystemRoot\SysWOW64\OneDrive.exe"
+                }
+                
+                if (Test-Path $oneDriveExe) {
+                    Set-ItemProperty -Path $runKeyPath -Name "OneDrive" -Value "`"$oneDriveExe`"" -Type String
+                    Write-Log "Added OneDrive to Run registry key for $userName"
+                    $totalAdded++
+                } else {
+                    Write-Log "OneDrive executable not found for $userName"
+                }
+                
+                reg unload $tempHive | Out-Null
+                Write-Log "Unloaded registry hive for $userName"
+            } else {
+                Write-Log "Failed to load registry hive for $userName`: $loadResult"
+            }
+        } catch {
+            Write-Log "Error processing registry for $userName`: $($_.Exception.Message)"
+            reg unload $tempHive 2>&1 | Out-Null
+        }
+        
+        # Add to startup folders
+        $userStartupFolder = "$userPath\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup"
+        $userOneDriveLnk = Join-Path $userStartupFolder "OneDrive.lnk"
+        
+        try {
+            if (-not (Test-Path $userStartupFolder)) {
+                New-Item -ItemType Directory -Path $userStartupFolder -Force | Out-Null
+            }
+            
+            # Find OneDrive executable
+            $oneDriveExe = "$env:SystemRoot\System32\OneDrive.exe"
+            if (-not (Test-Path $oneDriveExe)) {
+                $oneDriveExe = "$env:SystemRoot\SysWOW64\OneDrive.exe"
+            }
+            
+            if (Test-Path $oneDriveExe) {
+                $shell = New-Object -ComObject WScript.Shell
+                $shortcut = $shell.CreateShortcut($userOneDriveLnk)
+                $shortcut.TargetPath = $oneDriveExe
+                $shortcut.Save()
+                Write-Log "Created OneDrive startup shortcut for $userName"
+                $totalAdded++
+            }
+        } catch {
+            Write-Log "Failed to create OneDrive shortcut for $userName`: $($_.Exception.Message)"
+        }
+    }
+
+    # Add to All Users Startup Folder
+    $allUsersStartup = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp"
+    $allUsersOneDriveLnk = Join-Path $allUsersStartup "OneDrive.lnk"
+
+    try {
+        if (-not (Test-Path $allUsersStartup)) {
+            New-Item -ItemType Directory -Path $allUsersStartup -Force | Out-Null
+        }
+        
+        # Find OneDrive executable
+        $oneDriveExe = "$env:SystemRoot\System32\OneDrive.exe"
+        if (-not (Test-Path $oneDriveExe)) {
+            $oneDriveExe = "$env:SystemRoot\SysWOW64\OneDrive.exe"
+        }
+        
+        if (Test-Path $oneDriveExe) {
+            $shell = New-Object -ComObject WScript.Shell
+            $shortcut = $shell.CreateShortcut($allUsersOneDriveLnk)
+            $shortcut.TargetPath = $oneDriveExe
+            $shortcut.Save()
+            Write-Log "Added OneDrive shortcut to All Users startup folder"
+            $totalAdded++
+        }
+    } catch {
+        Write-Log "Failed to add OneDrive shortcut to All Users startup folder: $($_.Exception.Message)"
+    }
+
+    Write-Log "OneDrive startup enablement completed. Total entries added: $totalAdded"
+    return $totalAdded
 }
 
 function Uninstall-OneDrive {
     Write-Log "Starting OneDrive uninstallation process..."
     
-    # Kill OneDrive process if running
     Get-Process -Name "OneDrive" -ErrorAction SilentlyContinue | Stop-Process -Force
     Write-Log "Stopped OneDrive processes"
     
-    # Uninstall OneDrive
     $oneDriveSetup = "$env:SystemRoot\SysWOW64\OneDriveSetup.exe"
     if (-not (Test-Path $oneDriveSetup)) {
         $oneDriveSetup = "$env:SystemRoot\System32\OneDriveSetup.exe"
@@ -239,11 +405,8 @@ function Uninstall-OneDrive {
         Write-Log "Running OneDrive uninstaller..."
         Start-Process $oneDriveSetup "/uninstall" -NoNewWindow -Wait
         Write-Log "OneDrive uninstaller completed"
-    } else {
-        Write-Log "OneDrive setup executable not found"
     }
     
-    # Remove OneDrive folder
     $oneDriveFolder = "$env:USERPROFILE\OneDrive"
     if (Test-Path $oneDriveFolder) {
         try {
@@ -254,7 +417,7 @@ function Uninstall-OneDrive {
         }
     }
     
-    # Disable OneDrive via Group Policy Registry settings
+    # Disable OneDrive via registry
     $regPaths = @(
         "HKLM:\SOFTWARE\Policies\Microsoft\Windows\OneDrive",
         "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\FolderDescriptions\{A52BBA46-E9E1-435f-B3D9-28DAA648C0F6}",
@@ -267,7 +430,6 @@ function Uninstall-OneDrive {
         }
     }
     
-    # Disable OneDrive
     Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\OneDrive" -Name "DisableFileSyncNGSC" -Value 1 -Type DWord
     Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\OneDrive" -Name "DisableFileSync" -Value 1 -Type DWord
     
@@ -282,7 +444,6 @@ function Configure-CloudProvider {
     
     Write-Log "Configuring cloud provider: $Provider (Set as default: $SetAsDefault)"
     
-    # Get all user profiles with NTUSER.DAT files (existing users)
     $userProfiles = Get-ChildItem 'C:\Users' -Directory | Where-Object {
         (Test-Path "$($_.FullName)\NTUSER.DAT") -and
         ($_.Name -notin @('Default', 'Public', 'All Users', 'Default User'))
@@ -297,19 +458,17 @@ function Configure-CloudProvider {
             $ntUserDat = "$userPath\NTUSER.DAT"
             $tempHive = "HKU\TempHive_$userName"
 
-            # Load the user's registry hive
             $loadResult = reg load $tempHive $ntUserDat 2>&1
             if ($LASTEXITCODE -eq 0) {
                 Write-Log "Loaded registry hive for $userName"
                 
-                # Office cloud storage provider settings
                 $officeCloudPath = "Registry::$tempHive\Software\Microsoft\Office\16.0\Common\Cloud"
                 
                 if (-not (Test-Path $officeCloudPath)) {
                     New-Item -Path $officeCloudPath -Force | Out-Null
                 }
                 
-                # First, disable all providers to avoid conflicts
+                # Disable all providers first
                 $allProviders = @("OneDrive", "Dropbox", "GoogleDrive", "Box", "ShareFile", "Egnyte")
                 foreach ($p in $allProviders) {
                     $enableKey = "Enable${p}InOffice"
@@ -318,88 +477,67 @@ function Configure-CloudProvider {
                     }
                 }
                 
-                # Configure based on provider
+                # Configure selected provider
                 switch ($Provider) {
                     "Dropbox" {
-                        # Enable Dropbox integration
                         Set-ItemProperty -Path $officeCloudPath -Name "EnableDropboxInOffice" -Value 1 -Type DWord
-                        
                         if ($SetAsDefault) {
                             Set-ItemProperty -Path $officeCloudPath -Name "DefaultCloudProvider" -Value "Dropbox" -Type String
                             Set-ItemProperty -Path $officeCloudPath -Name "DefaultSaveLocation" -Value "Dropbox" -Type String
                         }
-                        
                         Write-Log "Enabled Dropbox integration for $userName"
                     }
                     "GoogleDrive" {
-                        # Enable Google Drive integration
                         Set-ItemProperty -Path $officeCloudPath -Name "EnableGoogleDriveInOffice" -Value 1 -Type DWord
-                        
                         if ($SetAsDefault) {
                             Set-ItemProperty -Path $officeCloudPath -Name "DefaultCloudProvider" -Value "GoogleDrive" -Type String
                             Set-ItemProperty -Path $officeCloudPath -Name "DefaultSaveLocation" -Value "GoogleDrive" -Type String
                         }
-                        
                         Write-Log "Enabled Google Drive integration for $userName"
                     }
                     "Box" {
-                        # Enable Box integration
                         Set-ItemProperty -Path $officeCloudPath -Name "EnableBoxInOffice" -Value 1 -Type DWord
-                        
                         if ($SetAsDefault) {
                             Set-ItemProperty -Path $officeCloudPath -Name "DefaultCloudProvider" -Value "Box" -Type String
                             Set-ItemProperty -Path $officeCloudPath -Name "DefaultSaveLocation" -Value "Box" -Type String
                         }
-                        
                         Write-Log "Enabled Box integration for $userName"
                     }
                     "ShareFile" {
-                        # Enable Citrix ShareFile integration
                         Set-ItemProperty -Path $officeCloudPath -Name "EnableShareFileInOffice" -Value 1 -Type DWord
-                        
                         if ($SetAsDefault) {
                             Set-ItemProperty -Path $officeCloudPath -Name "DefaultCloudProvider" -Value "ShareFile" -Type String
                             Set-ItemProperty -Path $officeCloudPath -Name "DefaultSaveLocation" -Value "ShareFile" -Type String
                         }
-                        
                         Write-Log "Enabled ShareFile integration for $userName"
                     }
                     "Egnyte" {
-                        # Enable Egnyte integration
                         Set-ItemProperty -Path $officeCloudPath -Name "EnableEgnyteInOffice" -Value 1 -Type DWord
-                        
                         if ($SetAsDefault) {
                             Set-ItemProperty -Path $officeCloudPath -Name "DefaultCloudProvider" -Value "Egnyte" -Type String
                             Set-ItemProperty -Path $officeCloudPath -Name "DefaultSaveLocation" -Value "Egnyte" -Type String
                         }
-                        
                         Write-Log "Enabled Egnyte integration for $userName"
                     }
                     "OneDrive" {
-                        # Enable OneDrive integration
                         Set-ItemProperty -Path $officeCloudPath -Name "EnableOneDriveInOffice" -Value 1 -Type DWord
-                        
                         if ($SetAsDefault) {
                             Set-ItemProperty -Path $officeCloudPath -Name "DefaultCloudProvider" -Value "OneDrive" -Type String
                             Set-ItemProperty -Path $officeCloudPath -Name "DefaultSaveLocation" -Value "OneDrive" -Type String
                         }
-                        
                         Write-Log "Enabled OneDrive integration for $userName"
                     }
                 }
                 
-                # Additional Office integration settings
                 $officeBackstagePath = "Registry::$tempHive\Software\Microsoft\Office\16.0\Common\Cloud\Backstage"
                 if (-not (Test-Path $officeBackstagePath)) {
                     New-Item -Path $officeBackstagePath -Force | Out-Null
                 }
                 
-                # Enable the selected provider in Office backstage view
                 if ($Provider -ne "None") {
                     Set-ItemProperty -Path $officeBackstagePath -Name "Show$Provider" -Value 1 -Type DWord -ErrorAction SilentlyContinue
                 }
                 
-                # Unload the registry hive
                 reg unload $tempHive | Out-Null
                 Write-Log "Unloaded registry hive for $userName"
             } else {
@@ -407,7 +545,6 @@ function Configure-CloudProvider {
             }
         } catch {
             Write-Log "Error configuring cloud provider for $userName`: $($_.Exception.Message)"
-            # Attempt to unload hive if it was loaded
             reg unload $tempHive 2>&1 | Out-Null
         }
     }
@@ -415,23 +552,307 @@ function Configure-CloudProvider {
     Write-Log "Cloud provider configuration completed for all users"
 }
 
+function Show-WpfGui {
+    # Load required assemblies
+    Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
+
+    # Define XAML
+    $xaml = @"
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Office 365 Cloud Storage Manager" Height="650" Width="950"
+        WindowStartupLocation="CenterScreen" ResizeMode="CanResize">
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Title -->
+        <TextBlock Grid.Row="0" Text="Office 365 Cloud Storage Provider Manager" 
+                   FontSize="18" FontWeight="Bold" Margin="0,0,0,5" HorizontalAlignment="Center"/>
+        
+        <!-- Author Info -->
+        <TextBlock Grid.Row="1" Text="by Brandon Cook | brandon@ghostinator.co | GitHub: ghostinator/SysAdminPSSorcery" 
+                   FontSize="11" Foreground="DarkSlateGray" HorizontalAlignment="Center" Margin="0,0,0,15"/>
+
+        <!-- Input Controls -->
+        <StackPanel Orientation="Horizontal" Grid.Row="2" Margin="0,0,0,15">
+            <Label Content="Cloud Provider:" Width="120" VerticalAlignment="Center"/>
+            <ComboBox Name="ProviderSelector" Width="150" SelectedIndex="0">
+                <ComboBoxItem Content="None"/>
+                <ComboBoxItem Content="OneDrive"/>
+                <ComboBoxItem Content="Dropbox"/>
+                <ComboBoxItem Content="GoogleDrive"/>
+                <ComboBoxItem Content="Box"/>
+                <ComboBoxItem Content="ShareFile"/>
+                <ComboBoxItem Content="Egnyte"/>
+            </ComboBox>
+            <CheckBox Name="RemoveOneDriveCheckbox" Margin="30,0,0,0" Content="Remove OneDrive" VerticalAlignment="Center"/>
+            <CheckBox Name="SetDefaultCheckbox" Margin="20,0,0,0" Content="Set as Default" VerticalAlignment="Center"/>
+        </StackPanel>
+
+        <!-- Data Grid -->
+        <GroupBox Grid.Row="3" Header="User Cloud Provider Status" Margin="0,0,0,15">
+            <DataGrid Name="UserGrid" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" 
+                      GridLinesVisibility="Horizontal" AlternatingRowBackground="LightGray">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="User" Binding="{Binding User}" Width="120"/>
+                    <DataGridTextColumn Header="Cloud Provider" Binding="{Binding CloudProvider}" Width="120"/>
+                    <DataGridTextColumn Header="Save Location" Binding="{Binding SaveLocation}" Width="120"/>
+                    <DataGridTextColumn Header="OneDrive Office" Binding="{Binding OneDriveOffice}" Width="100"/>
+                    <DataGridTextColumn Header="OneDrive Startup" Binding="{Binding OneDriveStartup}" Width="100"/>
+                    <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="*"/>
+                </DataGrid.Columns>
+            </DataGrid>
+        </GroupBox>
+
+        <!-- Status Bar -->
+        <TextBlock Name="StatusText" Grid.Row="4" Text="Ready" Margin="0,0,0,10" 
+                   FontStyle="Italic" Foreground="Blue"/>
+
+        <!-- Action Buttons -->
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Grid.Row="5">
+            <Button Name="ScanButton" Content="Scan Users" Width="100" Height="30" Margin="0,0,10,0"/>
+            <Button Name="EnableOneDriveButton" Content="Add OneDrive to Startup" Width="160" Height="30" Margin="0,0,10,0"/>
+            <Button Name="RunButton" Content="Run Configuration" Width="120" Height="30" Margin="0,0,10,0"/>
+            <Button Name="ExportButton" Content="Export..." Width="80" Height="30" Margin="0,0,10,0"/>
+            <Button Name="RefreshButton" Content="Refresh" Width="80" Height="30" Margin="0,0,10,0"/>
+            <Button Name="CloseButton" Content="Close" Width="80" Height="30"/>
+        </StackPanel>
+    </Grid>
+</Window>
+"@
+
+    # Load XAML
+    $reader = New-Object System.Xml.XmlNodeReader ([xml]$xaml)
+    $window = [Windows.Markup.XamlReader]::Load($reader)
+
+    # Get controls
+    $providerSelector = $window.FindName("ProviderSelector")
+    $removeOneDriveCheckbox = $window.FindName("RemoveOneDriveCheckbox")
+    $setDefaultCheckbox = $window.FindName("SetDefaultCheckbox")
+    $userGrid = $window.FindName("UserGrid")
+    $statusText = $window.FindName("StatusText")
+    $scanButton = $window.FindName("ScanButton")
+    $enableOneDriveButton = $window.FindName("EnableOneDriveButton")
+    $runButton = $window.FindName("RunButton")
+    $exportButton = $window.FindName("ExportButton")
+    $refreshButton = $window.FindName("RefreshButton")
+    $closeButton = $window.FindName("CloseButton")
+
+    # Global data variable
+    $script:currentData = @()
+
+    # Scan Users Button
+    $scanButton.Add_Click({
+        $statusText.Text = "Scanning user profiles..."
+        $window.Dispatcher.Invoke([System.Windows.Threading.DispatcherPriority]::Background, [action]{})
+        
+        try {
+            $script:currentData = Get-CloudProviderForAllUsers
+            $userGrid.ItemsSource = $script:currentData
+            $statusText.Text = "Scan completed. Found $($script:currentData.Count) user profiles."
+        } catch {
+            $statusText.Text = "Error during scan: $($_.Exception.Message)"
+        }
+    })
+
+    # Enable OneDrive Startup Button
+    $enableOneDriveButton.Add_Click({
+        $statusText.Text = "Adding OneDrive to startup for all users..."
+        $window.Dispatcher.Invoke([System.Windows.Threading.DispatcherPriority]::Background, [action]{})
+
+        try {
+            $added = Enable-OneDriveStartup
+            $statusText.Text = "OneDrive added to startup for $added user entries."
+            
+            # Refresh the grid
+            $script:currentData = Get-CloudProviderForAllUsers
+            $userGrid.ItemsSource = $script:currentData
+            
+            [System.Windows.MessageBox]::Show("OneDrive has been added to startup for $added user entries.", "Success", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
+        } catch {
+            $errorMessage = "Error adding OneDrive to startup: $($_.Exception.Message)"
+            $statusText.Text = $errorMessage
+            [System.Windows.MessageBox]::Show($errorMessage, "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
+        }
+    })
+
+    # Run Configuration Button
+    $runButton.Add_Click({
+        $provider = $providerSelector.SelectedItem.Content
+        $removeOD = $removeOneDriveCheckbox.IsChecked
+        $setDefault = $setDefaultCheckbox.IsChecked
+
+        $statusText.Text = "Running configuration..."
+        $window.Dispatcher.Invoke([System.Windows.Threading.DispatcherPriority]::Background, [action]{})
+
+        try {
+            $actions = @()
+            
+            if ($removeOD) {
+                $statusText.Text = "Removing OneDrive startup entries..."
+                $window.Dispatcher.Invoke([System.Windows.Threading.DispatcherPriority]::Background, [action]{})
+                $removed = Remove-OneDriveStartup
+                $actions += "Removed $removed OneDrive startup entries"
+                
+                $statusText.Text = "Uninstalling OneDrive..."
+                $window.Dispatcher.Invoke([System.Windows.Threading.DispatcherPriority]::Background, [action]{})
+                Uninstall-OneDrive
+                $actions += "OneDrive uninstallation completed"
+            }
+
+            if ($provider -ne "None") {
+                $statusText.Text = "Configuring $provider as cloud provider..."
+                $window.Dispatcher.Invoke([System.Windows.Threading.DispatcherPriority]::Background, [action]{})
+                Configure-CloudProvider -Provider $provider -SetAsDefault:$setDefault
+                $actions += "Configured $provider as cloud provider"
+                
+                if ($setDefault) {
+                    $actions += "Set $provider as default save location"
+                }
+            }
+
+            # Refresh the grid
+            $statusText.Text = "Refreshing user data..."
+            $window.Dispatcher.Invoke([System.Windows.Threading.DispatcherPriority]::Background, [action]{})
+            $script:currentData = Get-CloudProviderForAllUsers
+            $userGrid.ItemsSource = $script:currentData
+
+            $message = "Configuration completed successfully!`n`n" + ($actions -join "`n") + "`n`nLog file: $LogFile"
+            [System.Windows.MessageBox]::Show($message, "Success", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
+            
+            $statusText.Text = "Configuration completed successfully."
+        } catch {
+            $errorMessage = "Error during configuration: $($_.Exception.Message)"
+            [System.Windows.MessageBox]::Show($errorMessage, "Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
+            $statusText.Text = $errorMessage
+        }
+    })
+
+    # Export Button
+    $exportButton.Add_Click({
+        if ($script:currentData.Count -eq 0) {
+            [System.Windows.MessageBox]::Show("No data to export. Please scan users first.", "No Data", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+            return
+        }
+
+        $saveDialog = New-Object Microsoft.Win32.SaveFileDialog
+        $saveDialog.Filter = "CSV File (*.csv)|*.csv|HTML Report (*.html)|*.html"
+        $saveDialog.FileName = "CloudProviderReport_$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss')"
+        
+        if ($saveDialog.ShowDialog()) {
+            try {
+                if ($saveDialog.FileName.EndsWith(".csv")) {
+                    $script:currentData | Export-Csv -Path $saveDialog.FileName -NoTypeInformation -Encoding UTF8
+                    $statusText.Text = "Data exported to CSV: $($saveDialog.FileName)"
+                } elseif ($saveDialog.FileName.EndsWith(".html")) {
+                    $html = @"
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Office 365 Cloud Provider Report</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        h1 { color: #0078d4; }
+        .header { background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
+        table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; font-weight: bold; }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+        .timestamp { color: #666; font-size: 0.9em; }
+        .footer { margin-top: 30px; padding-top: 15px; border-top: 1px solid #ddd; color: #666; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Office 365 Cloud Provider Report</h1>
+        <p class="timestamp">Generated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')</p>
+        <p>Total Users: $($script:currentData.Count)</p>
+    </div>
+    
+    <table>
+        <tr>
+            <th>User</th>
+            <th>Cloud Provider</th>
+            <th>Save Location</th>
+            <th>OneDrive Office</th>
+            <th>OneDrive Startup</th>
+            <th>Status</th>
+        </tr>
+"@
+                    foreach ($row in $script:currentData) {
+                        $html += "<tr><td>$($row.User)</td><td>$($row.CloudProvider)</td><td>$($row.SaveLocation)</td><td>$($row.OneDriveOffice)</td><td>$($row.OneDriveStartup)</td><td>$($row.Status)</td></tr>"
+                    }
+                    
+                    $html += @"
+    </table>
+    
+    <div class="footer">
+        <p>Report generated by Office 365 Cloud Storage Manager</p>
+        <p>Created by: Brandon Cook | brandon@ghostinator.co</p>
+        <p>GitHub: <a href="https://github.com/ghostinator/SysAdminPSSorcery">ghostinator/SysAdminPSSorcery</a></p>
+    </div>
+</body>
+</html>
+"@
+                    $html | Set-Content -Path $saveDialog.FileName -Encoding UTF8
+                    $statusText.Text = "Report exported to HTML: $($saveDialog.FileName)"
+                }
+                
+                [System.Windows.MessageBox]::Show("Export completed successfully!", "Export Complete", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
+            } catch {
+                [System.Windows.MessageBox]::Show("Export failed: $($_.Exception.Message)", "Export Error", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Error)
+            }
+        }
+    })
+
+    # Refresh Button
+    $refreshButton.Add_Click({
+        $scanButton.RaiseEvent((New-Object System.Windows.RoutedEventArgs([System.Windows.Controls.Button]::ClickEvent)))
+    })
+
+    # Close Button
+    $closeButton.Add_Click({
+        $window.Close()
+    })
+
+    # Auto-scan on startup
+    $window.Add_Loaded({
+        $scanButton.RaiseEvent((New-Object System.Windows.RoutedEventArgs([System.Windows.Controls.Button]::ClickEvent)))
+    })
+
+    # Show window
+    $window.ShowDialog() | Out-Null
+}
+
 function Show-Menu {
     Clear-Host
     Write-Host "===== Office 365 Cloud Storage Provider Manager =====" -ForegroundColor Cyan
+    Write-Host "Created by: Brandon Cook | brandon@ghostinator.co" -ForegroundColor Green
+    Write-Host "GitHub: https://github.com/ghostinator/SysAdminPSSorcery" -ForegroundColor Green
+    Write-Host ""
     Write-Host "1: Remove OneDrive from startup"
-    Write-Host "2: Uninstall OneDrive completely"
-    Write-Host "3: Configure Dropbox as cloud provider"
-    Write-Host "4: Configure Google Drive as cloud provider"
-    Write-Host "5: Configure Box as cloud provider"
-    Write-Host "6: Configure Citrix ShareFile as cloud provider"
-    Write-Host "7: Configure Egnyte as cloud provider"
-    Write-Host "8: Configure OneDrive as cloud provider"
-    Write-Host "9: Exit"
+    Write-Host "2: Add OneDrive to startup"
+    Write-Host "3: Uninstall OneDrive completely"
+    Write-Host "4: Configure Dropbox as cloud provider"
+    Write-Host "5: Configure Google Drive as cloud provider"
+    Write-Host "6: Configure Box as cloud provider"
+    Write-Host "7: Configure Citrix ShareFile as cloud provider"
+    Write-Host "8: Configure Egnyte as cloud provider"
+    Write-Host "9: Configure OneDrive as cloud provider"
+    Write-Host "G: Show GUI"
+    Write-Host "0: Exit"
     Write-Host "===================================================" -ForegroundColor Cyan
     
-    $choice = Read-Host "Enter your choice (1-9)"
+    $choice = Read-Host "Enter your choice (0-9, G)"
     
-    switch ($choice) {
+    switch ($choice.ToUpper()) {
         "1" {
             $removed = Remove-OneDriveStartup
             Write-Host "Removed $removed OneDrive startup entries" -ForegroundColor Green
@@ -439,13 +860,19 @@ function Show-Menu {
             Show-Menu
         }
         "2" {
+            $added = Enable-OneDriveStartup
+            Write-Host "Added OneDrive to startup for $added user entries" -ForegroundColor Green
+            Pause
+            Show-Menu
+        }
+        "3" {
             Remove-OneDriveStartup
             Uninstall-OneDrive
             Write-Host "OneDrive has been uninstalled and disabled" -ForegroundColor Green
             Pause
             Show-Menu
         }
-        "3" {
+        "4" {
             $setDefault = Read-Host "Set Dropbox as default save location? (y/n)"
             $removeOD = Read-Host "Remove OneDrive? (y/n)"
             
@@ -459,7 +886,7 @@ function Show-Menu {
             Pause
             Show-Menu
         }
-        "4" {
+        "5" {
             $setDefault = Read-Host "Set Google Drive as default save location? (y/n)"
             $removeOD = Read-Host "Remove OneDrive? (y/n)"
             
@@ -473,7 +900,7 @@ function Show-Menu {
             Pause
             Show-Menu
         }
-        "5" {
+        "6" {
             $setDefault = Read-Host "Set Box as default save location? (y/n)"
             $removeOD = Read-Host "Remove OneDrive? (y/n)"
             
@@ -487,7 +914,7 @@ function Show-Menu {
             Pause
             Show-Menu
         }
-        "6" {
+        "7" {
             $setDefault = Read-Host "Set Citrix ShareFile as default save location? (y/n)"
             $removeOD = Read-Host "Remove OneDrive? (y/n)"
             
@@ -501,7 +928,7 @@ function Show-Menu {
             Pause
             Show-Menu
         }
-        "7" {
+        "8" {
             $setDefault = Read-Host "Set Egnyte as default save location? (y/n)"
             $removeOD = Read-Host "Remove OneDrive? (y/n)"
             
@@ -515,14 +942,18 @@ function Show-Menu {
             Pause
             Show-Menu
         }
-        "8" {
+        "9" {
             $setDefault = Read-Host "Set OneDrive as default save location? (y/n)"
             Configure-CloudProvider -Provider "OneDrive" -SetAsDefault ($setDefault -eq "y")
             Write-Host "OneDrive has been configured" -ForegroundColor Green
             Pause
             Show-Menu
         }
-        "9" {
+        "G" {
+            Show-WpfGui
+            Show-Menu
+        }
+        "0" {
             return
         }
         default {
@@ -533,164 +964,18 @@ function Show-Menu {
     }
 }
 
-function Show-GUI {
-    Add-Type -AssemblyName System.Windows.Forms
-    Add-Type -AssemblyName System.Drawing
+# Main execution logic
+Write-Log "Script started (PID: $PID)"
+Write-Log "Created by: Brandon Cook | brandon@ghostinator.co"
+Write-Log "GitHub: https://github.com/ghostinator/SysAdminPSSorcery"
 
-    $form = New-Object System.Windows.Forms.Form
-    $form.Text = "Office 365 Cloud Storage Manager"
-    $form.Size = New-Object System.Drawing.Size(500,400)
-    $form.StartPosition = "CenterScreen"
-    $form.FormBorderStyle = "FixedSingle"
-    $form.MaximizeBox = $false
-
-    # Provider selection
-    $labelProvider = New-Object System.Windows.Forms.Label
-    $labelProvider.Text = "Select Cloud Provider:"
-    $labelProvider.Location = New-Object System.Drawing.Point(20,20)
-    $labelProvider.Size = New-Object System.Drawing.Size(150,20)
-    $form.Controls.Add($labelProvider)
-
-    $comboProvider = New-Object System.Windows.Forms.ComboBox
-    $comboProvider.Location = New-Object System.Drawing.Point(180,18)
-    $comboProvider.Size = New-Object System.Drawing.Size(200,20)
-    $comboProvider.DropDownStyle = "DropDownList"
-    $comboProvider.Items.AddRange(@("None", "OneDrive", "Dropbox", "GoogleDrive", "Box", "ShareFile", "Egnyte"))
-    $comboProvider.SelectedIndex = 0
-    $form.Controls.Add($comboProvider)
-
-    # Options checkboxes
-    $checkRemoveOD = New-Object System.Windows.Forms.CheckBox
-    $checkRemoveOD.Text = "Remove OneDrive"
-    $checkRemoveOD.Location = New-Object System.Drawing.Point(20,60)
-    $checkRemoveOD.Size = New-Object System.Drawing.Size(150,20)
-    $form.Controls.Add($checkRemoveOD)
-
-    $checkSetDefault = New-Object System.Windows.Forms.CheckBox
-    $checkSetDefault.Text = "Set as Default for Office"
-    $checkSetDefault.Location = New-Object System.Drawing.Point(20,90)
-    $checkSetDefault.Size = New-Object System.Drawing.Size(200,20)
-    $form.Controls.Add($checkSetDefault)
-
-    # Scan button
-    $btnCheckStatus = New-Object System.Windows.Forms.Button
-    $btnCheckStatus.Text = "Scan Existing Users"
-    $btnCheckStatus.Location = New-Object System.Drawing.Point(20,120)
-    $btnCheckStatus.Size = New-Object System.Drawing.Size(120,30)
-    $form.Controls.Add($btnCheckStatus)
-
-    # User information list
-    $listInfo = New-Object System.Windows.Forms.ListBox
-    $listInfo.Location = New-Object System.Drawing.Point(20,160)
-    $listInfo.Size = New-Object System.Drawing.Size(450,150)
-    $listInfo.Font = New-Object System.Drawing.Font("Consolas", 8)
-    $listInfo.ScrollAlwaysVisible = $true
-    $form.Controls.Add($listInfo)
-
-    # Action buttons
-    $btnRun = New-Object System.Windows.Forms.Button
-    $btnRun.Text = "Run Configuration"
-    $btnRun.Location = New-Object System.Drawing.Point(270,320)
-    $btnRun.Size = New-Object System.Drawing.Size(100,30)
-    $form.Controls.Add($btnRun)
-
-    $btnClose = New-Object System.Windows.Forms.Button
-    $btnClose.Text = "Close"
-    $btnClose.Location = New-Object System.Drawing.Point(380,320)
-    $btnClose.Size = New-Object System.Drawing.Size(80,30)
-    $btnClose.Add_Click({ $form.Close() })
-    $form.Controls.Add($btnClose)
-
-    # Scan existing users button click
-    $btnCheckStatus.Add_Click({
-        $listInfo.Items.Clear()
-        $listInfo.Items.Add("Scanning user profiles...")
-        $form.Refresh()
-
-        try {
-            $userInfo = Get-CloudProviderForAllUsers
-            $listInfo.Items.Clear()
-            $listInfo.Items.Add("User Profile Scan Results:")
-            $listInfo.Items.Add("=" * 50)
-
-            if ($userInfo.Count -eq 0) {
-                $listInfo.Items.Add("No user profiles found.")
-            } else {
-                foreach ($entry in $userInfo) {
-                    $line = "{0,-15} | Provider: {1,-12} | SaveTo: {2}" -f $entry.User, $entry.CloudProvider, $entry.SaveLocation
-                    $listInfo.Items.Add($line)
-                }
-            }
-
-            $listInfo.Items.Add("=" * 50)
-            $listInfo.Items.Add("Scan complete. Found $($userInfo.Count) user profiles.")
-        } catch {
-            $listInfo.Items.Clear()
-            $listInfo.Items.Add("Error during scan: $($_.Exception.Message)")
-        }
-    })
-
-    # Run configuration button click
-    $btnRun.Add_Click({
-        $provider = $comboProvider.SelectedItem
-        $removeOD = $checkRemoveOD.Checked
-        $setDefault = $checkSetDefault.Checked
-
-        $listInfo.Items.Clear()
-        $listInfo.Items.Add("Running configuration...")
-        $listInfo.Items.Add("Provider: $provider")
-        $listInfo.Items.Add("Remove OneDrive: $removeOD")
-        $listInfo.Items.Add("Set as Default: $setDefault")
-        $listInfo.Items.Add("=" * 40)
-        $form.Refresh()
-
-        try {
-            if ($removeOD) {
-                $listInfo.Items.Add("Removing OneDrive startup entries...")
-                $form.Refresh()
-                $removed = Remove-OneDriveStartup
-                $listInfo.Items.Add("✔ Removed $removed OneDrive startup entries")
-                
-                $listInfo.Items.Add("Uninstalling OneDrive...")
-                $form.Refresh()
-                Uninstall-OneDrive
-                $listInfo.Items.Add("✔ OneDrive uninstallation completed")
-            }
-
-            if ($provider -ne "None") {
-                $listInfo.Items.Add("Configuring $provider as cloud provider...")
-                $form.Refresh()
-                Configure-CloudProvider -Provider $provider -SetAsDefault:$setDefault
-                $listInfo.Items.Add("✔ Configured $provider as cloud provider")
-                
-                if ($setDefault) {
-                    $listInfo.Items.Add("✔ Set $provider as default save location")
-                }
-            }
-
-            $listInfo.Items.Add("=" * 40)
-            $listInfo.Items.Add("✔ Configuration completed successfully!")
-            $listInfo.Items.Add("Log file: $LogFile")
-        } catch {
-            $listInfo.Items.Add("❌ Error during configuration: $($_.Exception.Message)")
-        }
-    })
-
-    # Auto-scan on startup
-    $form.Add_Shown({
-        $btnCheckStatus.PerformClick()
-        $form.Activate()
-    })
-
-    [void]$form.ShowDialog()
+# Password protection check
+if (-not (Test-Password -RequiredPassword $Config.RequiredPassword)) {
+    exit 1
 }
 
-# Main execution logic
-Write-Log "Script started"
-
-# Determine which configuration to use
+# Determine execution mode
 if ($UseHardcodedConfig) {
-    # Use hard-coded configuration (for Intune deployment)
     Write-Log "Using hard-coded configuration: Provider=$($Config.Provider), RemoveOneDrive=$($Config.RemoveOneDrive), SetAsDefault=$($Config.SetAsDefault)"
     
     if ($Config.RemoveOneDrive) {
@@ -703,15 +988,13 @@ if ($UseHardcodedConfig) {
         Configure-CloudProvider -Provider $Config.Provider -SetAsDefault $Config.SetAsDefault
     }
     
-    if ($Config.ShowMenu) {
-        Show-GUI
+    if ($Config.ShowGUI) {
+        Show-WpfGui
     }
 } else {
-    # Use command-line parameters or interactive GUI
-    if ($Provider -eq "None" -and -not $RemoveOneDrive) {
-        Show-GUI
-    } else {
-        # Process command line parameters
+    # Command-line mode or interactive
+    if ($NoGUI -or ($Provider -ne "None" -or $RemoveOneDrive)) {
+        # Command line parameters provided
         Write-Log "Using command-line parameters: Provider=$Provider, RemoveOneDrive=$RemoveOneDrive, SetAsDefault=$SetAsDefault"
         
         if ($RemoveOneDrive) {
@@ -723,9 +1006,15 @@ if ($UseHardcodedConfig) {
         if ($Provider -ne "None") {
             Configure-CloudProvider -Provider $Provider -SetAsDefault $SetAsDefault
         }
+    } else {
+        # Show GUI by default
+        Show-WpfGui
     }
 }
 
 Write-Log "Script completed successfully"
 Write-Host "Cloud storage configuration completed. See log: $LogFile" -ForegroundColor Green
-Read-Host -Prompt "Press Enter to exit"
+
+if ($NoGUI -or ($Provider -ne "None" -or $RemoveOneDrive)) {
+    Read-Host -Prompt "Press Enter to exit"
+}
