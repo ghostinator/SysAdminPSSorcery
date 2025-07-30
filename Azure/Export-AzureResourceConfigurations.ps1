@@ -1,4 +1,4 @@
-# Export-AzureResourceConfigurations.ps1
+﻿# Export-AzureResourceConfigurations.ps1
 # This script exports detailed configuration for all resources in Azure subscriptions
 
 # Function to get resource configuration details

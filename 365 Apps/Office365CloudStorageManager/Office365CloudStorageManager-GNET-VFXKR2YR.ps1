@@ -42,18 +42,31 @@ $UseHardcodedConfig = $false
 $Config = @{
     # Set to one of: "OneDrive", "Dropbox", "GoogleDrive", "Box", "ShareFile", "Egnyte", "None"
     Provider = "Dropbox"
-
+    
     # Set to $true to remove OneDrive completely, $false to keep it
     RemoveOneDrive = $true
-
+    
     # Set to $true to set the selected provider as default for Office, $false otherwise
     SetAsDefault = $true
-
+    
     # Set to $true to show interactive menu, $false for silent operation
     # Note: For Intune, this should typically be $false
     ShowMenu = $false
 }
 #endregion
+
+[CmdletBinding()]
+param(
+    [Parameter()]
+    [ValidateSet("OneDrive", "Dropbox", "GoogleDrive", "Box", "ShareFile", "Egnyte", "None")]
+    [string]$Provider = "None",
+    
+    [Parameter()]
+    [switch]$RemoveOneDrive,
+    
+    [Parameter()]
+    [switch]$SetAsDefault
+)
 
 # Configuration
 $ErrorActionPreference = "Continue"
@@ -71,20 +84,20 @@ function Remove-OneDriveStartup {
     Write-Log "Starting OneDrive startup removal for all existing users..."
 
     # Get all user profiles with NTUSER.DAT files (existing users)
-    $userProfiles = Get-ChildItem 'C:\Users' -Directory | Where-Object {
-        (Test-Path "$($_.FullName)\NTUSER.DAT") -and
-        ($_.Name -notin @('Default', 'Public', 'All Users', 'Default User'))
+    $userProfiles = Get-ChildItem 'C:\Users' -Directory | Where-Object { 
+        Test-Path "$($_.FullName)\NTUSER.DAT" -and 
+        $_.Name -notin @('Default', 'Public', 'All Users', 'Default User')
     }
 
     Write-Log "Found $($userProfiles.Count) user profiles to process"
 
     $totalRemoved = 0
 
-    foreach ($userProfile in $userProfiles) {
-        $userName = $userProfile.Name
-        $userPath = $userProfile.FullName
+    foreach ($profile in $userProfiles) {
+        $userName = $profile.Name
+        $userPath = $profile.FullName
         Write-Log "Processing user: $userName"
-
+        
         # --- A. Remove from Registry (HKCU Run Key) ---
         try {
             $ntUserDat = "$userPath\NTUSER.DAT"
@@ -223,20 +236,20 @@ function Configure-CloudProvider {
     Write-Log "Configuring cloud provider: $Provider (Set as default: $SetAsDefault)"
     
     # Get all user profiles with NTUSER.DAT files (existing users)
-    $userProfiles = Get-ChildItem 'C:\Users' -Directory | Where-Object {
-        (Test-Path "$($_.FullName)\NTUSER.DAT") -and
-        ($_.Name -notin @('Default', 'Public', 'All Users', 'Default User'))
+    $userProfiles = Get-ChildItem 'C:\Users' -Directory | Where-Object { 
+        Test-Path "$($_.FullName)\NTUSER.DAT" -and 
+        $_.Name -notin @('Default', 'Public', 'All Users', 'Default User')
     }
-
-    foreach ($userProfile in $userProfiles) {
-        $userName = $userProfile.Name
-        $userPath = $userProfile.FullName
+    
+    foreach ($profile in $userProfiles) {
+        $userName = $profile.Name
+        $userPath = $profile.FullName
         Write-Log "Configuring cloud provider for user: $userName"
-
+        
         try {
             $ntUserDat = "$userPath\NTUSER.DAT"
             $tempHive = "HKU\TempHive_$userName"
-
+            
             # Load the user's registry hive
             $loadResult = reg load $tempHive $ntUserDat 2>&1
             if ($LASTEXITCODE -eq 0) {

@@ -1,4 +1,4 @@
-#Requires -Modules Microsoft.Graph.Users
+﻿#Requires -Modules Microsoft.Graph.Users
 
 # Script to Clear the Birthday Field for All Entra ID Users
 # Created Date: Wednesday, May 7, 2025

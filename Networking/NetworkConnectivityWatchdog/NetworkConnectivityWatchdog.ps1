@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Network Connectivity Watchdog - Automated network adapter monitoring and reset tool.
 

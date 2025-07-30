@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Backs up only the files from a OneDrive folder that are physically stored on the local disk.
 
