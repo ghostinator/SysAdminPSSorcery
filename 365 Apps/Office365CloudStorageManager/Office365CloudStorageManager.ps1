@@ -516,4 +516,3 @@ if ($UseHardcodedConfig) {
 
 Write-Log "Script completed successfully"
 Write-Host "Cloud storage configuration completed. See log: $LogFile" -ForegroundColor Green
-Read-Host -Prompt "Press Enter to exit"
