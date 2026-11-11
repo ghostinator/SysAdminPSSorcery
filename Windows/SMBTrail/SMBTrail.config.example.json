@@ -1,0 +1,24 @@
+{
+  "CollectionDays": 7,
+  "CollectionIntervalMinutes": 5,
+  "OutputPath": "C:\\ProgramData\\SMBTrail",
+  "TaskPrefix": "SMBTrail",
+  "Delivery": {
+    "Method": "None",
+    "To": "admin@example.com",
+    "From": "smbtrail@example.com",
+    "FromName": "SMBTrail",
+    "Host": "smtp.example.com",
+    "Port": 587,
+    "UseTls": true,
+    "Username": "smtp-user",
+    "Password": "",
+    "PasswordEnvironmentVariable": "SMBTRAIL_SMTP_PASSWORD",
+    "ApiKey": "",
+    "ApiKeyEnvironmentVariable": "SMBTRAIL_API_KEY",
+    "BaseUrl": "https://postal.example.com",
+    "Uri": "https://api.example.com/send",
+    "HeaderName": "Authorization",
+    "HeaderPrefix": "Bearer "
+  }
+}
