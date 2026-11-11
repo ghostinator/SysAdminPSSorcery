@@ -163,16 +163,90 @@ function Send-Report([string]$Subject,[string]$Body,[string]$Attachment) {
 }
 
 function Install-SMBTrail {
-    Initialize-Path; Copy-Item $PSCommandPath $InstalledScript -Force; Copy-Item $ConfigPath $InstalledConfig -Force; Export-Baseline
-    $start=Get-Date; $end=$start.AddDays([double]$Config.CollectionDays); Save-State @{StartTime=$start.ToString('o');EndTime=$end.ToString('o');Server=$env:COMPUTERNAME}
-    $principal=New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-    $settings=New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
-    $a1=New-ScheduledTaskAction -Execute 'PowerShell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$InstalledScript`" -Mode Collect -ConfigPath `"$InstalledConfig`""
-    $t1=New-ScheduledTaskTrigger -Once -At $start.AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes ([int]$Config.CollectionIntervalMinutes)) -RepetitionDuration (New-TimeSpan -Days ([double]$Config.CollectionDays+1))
-    Register-ScheduledTask -TaskName "$TaskPrefix-Collect" -Action $a1 -Trigger $t1 -Principal $principal -Settings $settings -Force|Out-Null
-    $a2=New-ScheduledTaskAction -Execute 'PowerShell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$InstalledScript`" -Mode Finalize -ConfigPath `"$InstalledConfig`""
-    Register-ScheduledTask -TaskName "$TaskPrefix-Finalize" -Action $a2 -Trigger (New-ScheduledTaskTrigger -Once -At $end) -Principal $principal -Settings (New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 30)) -Force|Out-Null
-    Invoke-Collection; "SMBTrail installed. Finalization scheduled for $end."
+    Initialize-Path
+
+    # Only copy the script if it is not already running from the install path
+    $sourceScript = [IO.Path]::GetFullPath($PSCommandPath)
+    $destinationScript = [IO.Path]::GetFullPath($InstalledScript)
+
+    if ($sourceScript -ne $destinationScript) {
+        Copy-Item -Path $PSCommandPath -Destination $InstalledScript -Force
+    }
+
+    # Only copy the config if it is not already the installed config
+    $sourceConfig = [IO.Path]::GetFullPath($ConfigPath)
+    $destinationConfig = [IO.Path]::GetFullPath($InstalledConfig)
+
+    if ($sourceConfig -ne $destinationConfig) {
+        Copy-Item -Path $ConfigPath -Destination $InstalledConfig -Force
+    }
+
+    Export-Baseline
+
+    $start = Get-Date
+    $end = $start.AddDays([double]$Config.CollectionDays)
+
+    Save-State @{
+        StartTime = $start.ToString('o')
+        EndTime   = $end.ToString('o')
+        Server    = $env:COMPUTERNAME
+    }
+
+    $principal = New-ScheduledTaskPrincipal `
+        -UserId 'SYSTEM' `
+        -LogonType ServiceAccount `
+        -RunLevel Highest
+
+    $settings = New-ScheduledTaskSettingsSet `
+        -StartWhenAvailable `
+        -MultipleInstances IgnoreNew `
+        -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
+
+    $collectAction = New-ScheduledTaskAction `
+        -Execute 'PowerShell.exe' `
+        -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$InstalledScript`" -Mode Collect -ConfigPath `"$InstalledConfig`""
+
+    $collectTrigger = New-ScheduledTaskTrigger `
+        -Once `
+        -At $start.AddMinutes(1) `
+        -RepetitionInterval (New-TimeSpan -Minutes ([int]$Config.CollectionIntervalMinutes)) `
+        -RepetitionDuration (New-TimeSpan -Days ([double]$Config.CollectionDays + 1))
+
+    Register-ScheduledTask `
+        -TaskName "$TaskPrefix-Collect" `
+        -Action $collectAction `
+        -Trigger $collectTrigger `
+        -Principal $principal `
+        -Settings $settings `
+        -Force | Out-Null
+
+    $finalizeAction = New-ScheduledTaskAction `
+        -Execute 'PowerShell.exe' `
+        -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$InstalledScript`" -Mode Finalize -ConfigPath `"$InstalledConfig`""
+
+    $finalizeTrigger = New-ScheduledTaskTrigger `
+        -Once `
+        -At $end
+
+    $finalizeSettings = New-ScheduledTaskSettingsSet `
+        -StartWhenAvailable `
+        -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
+
+    Register-ScheduledTask `
+        -TaskName "$TaskPrefix-Finalize" `
+        -Action $finalizeAction `
+        -Trigger $finalizeTrigger `
+        -Principal $principal `
+        -Settings $finalizeSettings `
+        -Force | Out-Null
+
+    Invoke-Collection
+
+    Write-Host "SMBTrail installed successfully."
+    Write-Host "Collection started: $start"
+    Write-Host "Finalization scheduled: $end"
+    Write-Host "Collection interval: $($Config.CollectionIntervalMinutes) minutes"
+    Write-Host "Delivery method: $($Config.Delivery.Method)"
 }
 function Finalize-SMBTrail {
     $state=Get-State; if(-not $state){throw 'State file not found'}; $start=[datetime]$state.StartTime; $end=Get-Date
@@ -183,7 +257,51 @@ function Finalize-SMBTrail {
     "Complete. Report: $zip"
 }
 function Test-Delivery { Initialize-Path; $f=Join-Path $Config.OutputPath 'SMBTrail-delivery-test.txt'; 'SMBTrail delivery test'|Set-Content $f; $z=Join-Path $Config.OutputPath 'SMBTrail-delivery-test.zip'; Compress-Archive $f $z -Force; Send-Report 'SMBTrail delivery test' 'Delivery is configured correctly.' $z; 'Delivery test completed.' }
-function Show-Status { $s=Get-State; [pscustomobject]@{Computer=$env:COMPUTERNAME;Start=$s.StartTime;End=$s.EndTime;Method=$Config.Delivery.Method;Output=$Config.OutputPath;CollectTask=(Get-ScheduledTask "$TaskPrefix-Collect" -ErrorAction SilentlyContinue).State;FinalizeTask=(Get-ScheduledTask "$TaskPrefix-Finalize" -ErrorAction SilentlyContinue).State}|Format-List }
+function Show-Status {
+    $s = Get-State
+
+    $collectTask = Get-ScheduledTask `
+        -TaskName "$TaskPrefix-Collect" `
+        -ErrorAction SilentlyContinue
+
+    $finalizeTask = Get-ScheduledTask `
+        -TaskName "$TaskPrefix-Finalize" `
+        -ErrorAction SilentlyContinue
+
+    [pscustomobject]@{
+        Computer = $env:COMPUTERNAME
+        Installed = [bool]$s
+        Start = if ($s -and $s.PSObject.Properties['StartTime']) {
+            $s.StartTime
+        } else {
+            'Not initialized'
+        }
+        End = if ($s -and $s.PSObject.Properties['EndTime']) {
+            $s.EndTime
+        } else {
+            'Not initialized'
+        }
+        DeliveryMethod = $Config.Delivery.Method
+        OutputPath = $Config.OutputPath
+        CollectTask = if ($collectTask) {
+            $collectTask.State
+        } else {
+            'Not installed'
+        }
+        FinalizeTask = if ($finalizeTask) {
+            $finalizeTask.State
+        } else {
+            'Not installed'
+        }
+        StateFile = if (Test-Path $StatePath) {
+            'Present'
+        } else {
+            'Missing'
+        }
+        SessionData = Test-Path $SessionCsv
+        OpenFileData = Test-Path $OpenFileCsv
+    } | Format-List
+}
 function Uninstall-SMBTrail { Unregister-ScheduledTask "$TaskPrefix-Collect" -Confirm:$false -ErrorAction SilentlyContinue; Unregister-ScheduledTask "$TaskPrefix-Finalize" -Confirm:$false -ErrorAction SilentlyContinue; 'Tasks removed. Output retained.' }
 
 switch($Mode){'Install'{Install-SMBTrail};'Collect'{Invoke-Collection};'Finalize'{Finalize-SMBTrail};'Status'{Show-Status};'TestDelivery'{Test-Delivery};'Uninstall'{Uninstall-SMBTrail}}
